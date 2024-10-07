@@ -26,7 +26,7 @@ gem "administrate", '1.0.0.beta1'
 # Open AI ruby
 gem "ruby-openai", "~> 6.2.0"
 
-gem "pagy", "~> 9.0.9"
+gem "pagy", "~> 9.1.0"
 
 gem "pundit", "~> 2.4"
 
