@@ -25,7 +25,7 @@ gem "delayed_job_active_record", "~> 4.1"
 # Administrate for admin panel
 gem "administrate", "1.0.0.beta1"
 # Open AI ruby
-gem "ruby-openai", "~> 6.2.0"
+gem "ruby-openai", "~> 7.3.0"
 # Pagy for pagination
 gem "pagy", "~> 9.0.9"
 # Pundit for authorization
