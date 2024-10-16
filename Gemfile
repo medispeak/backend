@@ -35,7 +35,7 @@ gem "aws-sdk-s3", require: false
 # Devise for authentication
 gem "devise", "~> 4.9"
 # Tailwind CSS
-gem "tailwindcss-rails", "~> 2.7"
+gem "tailwindcss-rails", "~> 3.0"
 # CORS for API
 gem 'rack-cors', "~> 2.0.1"
 
