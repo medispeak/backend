@@ -6,10 +6,17 @@ class Api::V1::TranscriptionsController < Api::BaseController
   def create
     page = Page.find_by(id: params[:page_id])
     if page
-      transcription = page.transcriptions.create!(transcription_params.merge(user: current_user))
-      text = ai_transcribe(params[:transcription][:audio_file])
-      transcription.update!(transcription_text: text, status: :transcribed)
-      render json: format_transcription(transcription), status: :created
+      begin
+        transcription = page.transcriptions.create!(transcription_params.merge(user: current_user))
+        text = ai_transcribe(params[:transcription][:audio_file])
+        transcription.update!(transcription_text: text, status: :transcribed)
+      rescue StandardError => e
+        Rails.logger.error("Error during transcription processing: #{e.message}")
+        transcription.update!(status: :failed)
+        render json: { error: "Internal server error occurred while processing transcription" }, status: :internal_server_error
+      else
+        render json: format_transcription(transcription), status: :created
+      end
     else
       render json: { error: "Page not found" }, status: :not_found
     end
@@ -51,8 +58,15 @@ class Api::V1::TranscriptionsController < Api::BaseController
   def generate_completion
     transcription = current_user.transcriptions.find_by(id: params[:id])
     if transcription
-      ai_generate_completion(transcription)
-      render json: format_transcription(transcription)
+      begin
+        ai_generate_completion(transcription)
+      rescue StandardError => e
+        Rails.logger.error("Error during transcription processing: #{e.message}")
+        transcription.update!(status: :failed)
+        render json: { error: "Internal server error occurred while processing transcription" }, status: :internal_server_error
+      else
+          render json: format_transcription(transcription)
+      end
     else
       render json: { error: "transcription not found" }, status: :not_found
     end
@@ -64,6 +78,7 @@ class Api::V1::TranscriptionsController < Api::BaseController
 
   def format_transcription(transcription)
     transcription.attributes.merge(
+      transcription_text: transcription.transcription_text.nil? ? "" : transcription.transcription_text,
       audio_file_url: transcription.audio_file.attached? ? url_for(transcription.audio_file) : nil,
       title: "Transcription #{transcription.id}"
     )
