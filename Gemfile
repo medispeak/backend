@@ -37,7 +37,7 @@ gem "devise", "~> 4.9"
 # Tailwind CSS
 gem "tailwindcss-rails", "~> 2.7"
 # CORS for API
-gem 'rack-cors', "~> 2.0.1"
+gem "rack-cors", "~> 2.0.1"
 
 
 
