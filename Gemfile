@@ -23,7 +23,7 @@ gem "inline_svg", "~> 1.10.0"
 # Delayed job
 gem "delayed_job_active_record", "~> 4.1"
 # Administrate for admin panel
-gem "administrate", "1.0.0.beta1"
+gem "administrate", "1.0.0.beta2"
 # Open AI ruby
 gem "ruby-openai", "~> 6.2.0"
 # Pagy for pagination
