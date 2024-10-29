@@ -27,7 +27,7 @@ gem "administrate", "1.0.0.beta1"
 # Open AI ruby
 gem "ruby-openai", "~> 6.2.0"
 # Pagy for pagination
-gem "pagy", "~> 6.0"
+gem "pagy", "~> 9.1"
 # Pundit for authorization
 gem "pundit", "~> 2.4"
 # AWS S3 for file storage
