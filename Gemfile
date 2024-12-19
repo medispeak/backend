@@ -27,7 +27,7 @@ gem "administrate", github: "thoughtbot/administrate", branch: "main"
 # Open AI ruby
 gem "ruby-openai", "~> 6.2"
 # Pagy for pagination
-gem "pagy", "~> 6.0"
+gem "pagy", "~> 9.3"
 # Pundit for authorization
 gem "pundit", "~> 2.4"
 # AWS S3 for file storage
