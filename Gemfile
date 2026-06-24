@@ -20,8 +20,6 @@ gem "jbuilder"
 gem "dotenv-rails", "~> 3.1", groups: %i[development test]
 # Inline SVG
 gem "inline_svg", "~> 1.10.0"
-# Delayed job
-gem "delayed_job_active_record", "~> 4.1"
 # Administrate for admin panel
 gem "administrate", github: "thoughtbot/administrate", branch: "main"
 # Open AI ruby
