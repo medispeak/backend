@@ -14,8 +14,10 @@ module ExceptionHandler
 
   def handle_uncaught_error(err)
     log_error(err)
+    # Never interpolate err.message into the client response (CWE-209): raw
+    # exception text can leak internals. Detail stays in the logs above.
     render_error_response(
-      "There was an unexpected error: #{err.message}",
+      "An unexpected error occurred.",
       :internal_server_error
     )
   end
@@ -29,7 +31,8 @@ module ExceptionHandler
     render json: {
       error: {
         message: message,
-        code: code
+        code: code,
+        request_id: request.request_id
       }
     }, status: code
   end
