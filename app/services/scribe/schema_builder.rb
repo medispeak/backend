@@ -23,11 +23,15 @@ module Scribe
       @context = context || {}
     end
 
-    def call
+    # for_validation: false -> MODEL schema (min/max only as description hints,
+    #   because strict decoding engines reject minimum/maximum keywords).
+    # for_validation: true  -> VALIDATION schema with real minimum/maximum, used
+    #   by SchemaValidator to enforce constraints the model cannot.
+    def call(for_validation: false)
       {
         type: "object",
         additionalProperties: false,
-        properties: @fields.each_with_object({}) { |f, h| h[f.title] = field_schema(f) },
+        properties: @fields.each_with_object({}) { |f, h| h[f.title] = field_schema(f, for_validation: for_validation) },
         # Current product semantics: every field is optional. The OpenAI strict
         # adapter transform promotes these to required+nullable as that API
         # demands; the core schema stays honest about optionality.
@@ -37,7 +41,7 @@ module Scribe
 
     private
 
-    def field_schema(field)
+    def field_schema(field, for_validation: false)
       schema = { type: json_type(field), description: description_for(field) }
 
       case field.field_type.to_s
@@ -47,9 +51,21 @@ module Scribe
         items = { type: "string" }
         items[:enum] = Array(field.enum_options) if present?(field.enum_options)
         schema[:items] = items
+      when "number"
+        if for_validation
+          schema[:minimum] = numeric(field.minimum) if present?(field.minimum)
+          schema[:maximum] = numeric(field.maximum) if present?(field.maximum)
+        end
       end
 
       schema.compact
+    end
+
+    def numeric(value)
+      str = value.to_s
+      str.include?(".") ? Float(str) : Integer(str)
+    rescue ArgumentError, TypeError
+      nil
     end
 
     def json_type(field)
