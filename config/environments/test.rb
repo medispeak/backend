@@ -20,7 +20,11 @@ Rails.application.configure do
 
   # Show full error reports.
   config.consider_all_requests_local = true
-  config.cache_store = :null_store
+  # Real cache store so rate-limit / idempotency code is exercised in tests.
+  config.cache_store = :memory_store
+
+  # Run background jobs synchronously for deterministic tests.
+  config.active_job.queue_adapter = :inline
 
   # Render exception templates for rescuable exceptions and raise for other exceptions.
   config.action_dispatch.show_exceptions = :rescuable
