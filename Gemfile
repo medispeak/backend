@@ -40,6 +40,8 @@ gem "tailwindcss-rails", "~> 2.7"
 gem "rack-cors", "~> 2.0.1"
 # JSON Schema validation for structured-output validate + repair
 gem "json_schemer", "~> 2.3"
+# Edge throttling / rate limiting
+gem "rack-attack", "~> 6.7"
 
 
 

@@ -297,6 +297,8 @@ GEM
     raabro (1.4.0)
     racc (1.8.1)
     rack (3.1.8)
+    rack-attack (6.8.0)
+      rack (>= 1.0, < 4)
     rack-cors (2.0.2)
       rack (>= 2.0.0)
     rack-session (2.0.0)
@@ -492,6 +494,7 @@ DEPENDENCIES
   pry
   puma (>= 5.0)
   pundit (~> 2.4)
+  rack-attack (~> 6.7)
   rack-cors (~> 2.0.1)
   rails (~> 8.0)
   rubocop-rails-omakase

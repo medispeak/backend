@@ -4,8 +4,8 @@ module Llm
   # standalone tests the constant is already loaded.
   module Registry
     ADAPTERS = {
-      openai_compatible: "Llm::Adapters::OpenaiCompatible"
-      # anthropic: "Llm::Adapters::Anthropic"  # added in a later phase
+      openai_compatible: "Llm::Adapters::OpenaiCompatible",
+      anthropic: "Llm::Adapters::Anthropic"
     }.freeze
 
     def self.adapter_for(config)
