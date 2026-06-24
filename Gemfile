@@ -38,6 +38,8 @@ gem "devise", "~> 4.9"
 gem "tailwindcss-rails", "~> 2.7"
 # CORS for API
 gem "rack-cors", "~> 2.0.1"
+# JSON Schema validation for structured-output validate + repair
+gem "json_schemer", "~> 2.3"
 
 
 
@@ -85,4 +87,10 @@ group :test do
   # Use system testing [https://guides.rubyonrails.org/testing.html#system-testing]
   gem "capybara"
   gem "selenium-webdriver"
+  # Stub external provider HTTP in adapter/contract tests
+  gem "webmock", "~> 3.24"
+  # Concise mocking/stubbing for service-object tests
+  gem "mocha", "~> 2.7"
+  # Test data factories
+  gem "factory_bot_rails", "~> 6.4"
 end
