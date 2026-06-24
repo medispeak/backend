@@ -1,0 +1,68 @@
+<%#
+# Model Assignments index (override)
+
+Injects a System-level resolution summary above the standard Administrate table
+so admins can see, at a glance, which model serves ASR vs Structuring vs the
+Combined function at the System scope. Resolution at request time is
+Page -> Account -> System -> ENV defaults; this panel shows the System row,
+which is the configurable global default.
+%>
+
+<% content_for(:before_main) do %>
+  <% system_assignments = ModelAssignment.where(scope_type: "System").index_by(&:function) %>
+  <section class="main-content__body" style="margin-bottom: 1.5rem;">
+    <h2 style="margin-bottom: 0.5rem;">System resolution (global defaults)</h2>
+    <p style="margin-bottom: 0.75rem; color: #6b7280;">
+      Requests resolve Page &rarr; Account &rarr; System &rarr; ENV defaults.
+      These System assignments apply when no Page or Account override matches.
+    </p>
+    <table class="cell">
+      <thead>
+        <tr>
+          <th>Function</th>
+          <th>Model</th>
+          <th>Provider</th>
+          <th>Fallback</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% ModelAssignment::FUNCTIONS.each do |function| %>
+          <% assignment = system_assignments[function] %>
+          <tr>
+            <td><strong><%= function %></strong></td>
+            <% if assignment %>
+              <td>
+                <%= link_to(
+                  assignment.ai_model.display_name.presence || assignment.ai_model.api_model_id,
+                  [:admin, assignment.ai_model]
+                ) %>
+              </td>
+              <td><%= assignment.ai_model.ai_provider&.name %></td>
+              <td>
+                <% if assignment.fallback_ai_model %>
+                  <%= assignment.fallback_ai_model.display_name.presence || assignment.fallback_ai_model.api_model_id %>
+                <% else %>
+                  <span style="color: #9ca3af;">&mdash;</span>
+                <% end %>
+              </td>
+            <% else %>
+              <td colspan="3" style="color: #9ca3af;">
+                Not configured &mdash; falls back to ENV defaults (e.g. OPENAI_ACCESS_TOKEN).
+              </td>
+            <% end %>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
+<%= render(
+  template: "administrate/application/index",
+  locals: {
+    resources: resources,
+    search_term: search_term,
+    page: page,
+    show_search_bar: show_search_bar
+  }
+) %>

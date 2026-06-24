@@ -7,6 +7,12 @@ Rails.application.routes.draw do
       resources :form_fields
       resources :transcriptions, except: [ :destroy ]
 
+      resources :ai_providers
+      resources :ai_models
+      resources :model_assignments
+      resources :accounts
+      resources :usage_events, only: [ :index, :show ]
+
       root to: "users#index"
     end
   devise_for :users
