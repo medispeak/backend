@@ -56,5 +56,17 @@ Rails.application.routes.draw do
         end
       end
     end
+
+    namespace :v2 do
+      resources :scribe_sessions, only: [ :create, :show, :index ] do
+        member do
+          post :audio
+          post :commit
+        end
+      end
+
+      get :config, to: "config#show"
+      get :usage, to: "usage#show"
+    end
   end
 end

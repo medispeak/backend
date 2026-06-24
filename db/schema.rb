@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_06_25_200003) do
+ActiveRecord::Schema[8.0].define(version: 2026_06_25_200004) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -167,6 +167,19 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_25_200003) do
     t.string "maximum"
     t.string "enum_options", default: [], array: true
     t.index ["page_id"], name: "index_form_fields_on_page_id"
+  end
+
+  create_table "idempotency_keys", force: :cascade do |t|
+    t.bigint "api_token_id", null: false
+    t.string "key", null: false
+    t.string "request_fingerprint"
+    t.jsonb "response_body"
+    t.integer "response_status"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["api_token_id", "key"], name: "index_idempotency_keys_on_token_and_key", unique: true
+    t.index ["api_token_id"], name: "index_idempotency_keys_on_api_token_id"
   end
 
   create_table "model_assignments", force: :cascade do |t|

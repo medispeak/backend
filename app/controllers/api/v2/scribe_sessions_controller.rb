@@ -1,0 +1,177 @@
+require "digest"
+
+module Api
+  module V2
+    class ScribeSessionsController < BaseController
+      OUTPUT_TYPES = %w[transcript form note].freeze
+
+      # POST /api/v2/scribe_sessions
+      def create
+        fingerprint = Digest::SHA256.hexdigest(raw_request_body)
+
+        with_idempotency(fingerprint) do
+          outputs = Array(create_params[:outputs])
+
+          error = validate_outputs(outputs)
+          if error
+            render_error(code: "validation_error", message: error, status: :unprocessable_entity)
+            next
+          end
+
+          session = build_session
+          session.save!
+          build_outputs(session, outputs)
+
+          render json: serialize(session), status: :created
+        end
+      end
+
+      # POST /api/v2/scribe_sessions/:id/audio
+      def audio
+        session = find_session
+        return unless session
+
+        if session.expired?
+          render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
+          return
+        end
+
+        session.audio_files.attach(params[:audio])
+        session.update!(status: "uploading")
+
+        render json: { id: session.id, status: session.status }, status: :ok
+      end
+
+      # POST /api/v2/scribe_sessions/:id/commit
+      def commit
+        session = find_session
+        return unless session
+
+        if session.expired?
+          render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
+          return
+        end
+
+        fingerprint = "commit:#{session.id}"
+        with_idempotency(fingerprint) do
+          Metering::QuotaGuard.hold!(account: current_account, estimate: 0)
+          session.update!(status: "processing")
+          ProcessScribeSessionJob.perform_later(session.id)
+
+          render json: serialize(session), status: :accepted
+        end
+      end
+
+      # GET /api/v2/scribe_sessions/:id
+      def show
+        session = find_session
+        return unless session
+
+        render json: serialize(session), status: status_for(session)
+      end
+
+      # GET /api/v2/scribe_sessions
+      def index
+        sessions = account_sessions.order(created_at: :desc).limit(50)
+        render json: { scribe_sessions: sessions.map { |s| serialize(s) } }, status: :ok
+      end
+
+      private
+
+      # Account-scoped session relation. Scopes through belongs_to :account
+      # rather than a has_many on Account so this chunk does not depend on a
+      # model it cannot edit; a cross-account :id therefore 404s.
+      def account_sessions
+        ScribeSession.where(account: current_account)
+      end
+
+      def find_session
+        session = account_sessions.find_by(id: params[:id])
+        unless session
+          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
+          return nil
+        end
+        session
+      end
+
+      def build_session
+        ScribeSession.new(
+          account: current_account,
+          api_token: current_api_token,
+          user: current_api_token.user,
+          status: "created",
+          language: create_params[:language_hint],
+          mode: create_params[:mode].presence || "consultation",
+          callback_url: create_params[:callback_url],
+          idempotency_key: idempotency_key_header,
+          expires_at: 24.hours.from_now
+        )
+      end
+
+      def build_outputs(session, outputs)
+        outputs.each do |output|
+          output = output.to_h.with_indifferent_access
+          session.scribe_outputs.create!(
+            status: "pending",
+            output_type: output[:type],
+            page_id: output[:page_id],
+            template_ref: output[:template_ref],
+            context: output[:context].presence || {}
+          )
+        end
+      end
+
+      # Returns an error message string, or nil when all outputs are valid.
+      def validate_outputs(outputs)
+        return "outputs must be a non-empty array" if outputs.blank?
+
+        outputs.each do |output|
+          output = output.to_h.with_indifferent_access
+          type = output[:type]
+
+          unless OUTPUT_TYPES.include?(type)
+            return "Invalid output type: #{type.inspect}"
+          end
+
+          if type == "form"
+            page_id = output[:page_id]
+            unless page_id.present? && Page.exists?(id: page_id)
+              return "page_id #{page_id.inspect} does not reference an existing page"
+            end
+          end
+        end
+
+        nil
+      end
+
+      # 200 when terminal (completed/failed), 206 when partial, 202 otherwise.
+      def status_for(session)
+        case session.status
+        when "completed", "failed" then :ok
+        when "partial" then :partial_content
+        else :accepted
+        end
+      end
+
+      def serialize(session)
+        ScribeSessionSerializer.new(session).as_json
+      end
+
+      # Raw request body for the idempotency fingerprint. Rewind first because
+      # JSON param parsing may have already consumed the stream.
+      def raw_request_body
+        request.body.rewind if request.body.respond_to?(:rewind)
+        body = request.body.read
+        request.body.rewind if request.body.respond_to?(:rewind)
+        body.to_s
+      end
+
+      def create_params
+        params.permit(
+          :language_hint, :mode, :callback_url,
+          outputs: [ :type, :page_id, :template_ref, { context: {} } ]
+        )
+      end
+    end
+  end
+end
