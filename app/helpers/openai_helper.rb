@@ -7,9 +7,9 @@
 # the GenericException error contract are preserved so v1 clients are unaffected.
 module OpenaiHelper
   # mode defaults to :translate to preserve v1's English-transcript behavior.
-  def ai_transcribe(file, mode: :translate, language: nil)
+  def ai_transcribe(file, page: nil, account: nil, mode: :translate, language: nil)
     validate_api_credentials
-    config = Llm::DefaultConfigProvider.call(function: :asr)
+    config = Llm::ConfigResolver.call(function: :asr, page: page, account: account)
     Scribe::AsrStage.new(config: config)
                     .call(File.open(file), mode: mode, language: language)
                     .text
@@ -27,7 +27,11 @@ module OpenaiHelper
 
   def ai_generate_completion(transcription)
     validate_api_credentials
-    config = Llm::DefaultConfigProvider.call(function: :structuring)
+    config = Llm::ConfigResolver.call(
+      function: :structuring,
+      page: transcription.page,
+      account: transcription.user&.account
+    )
     stage = Scribe::StructuringStage.new(
       config: config,
       fields: transcription.form_fields,

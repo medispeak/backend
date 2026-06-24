@@ -8,8 +8,10 @@ WebMock.disable_net_connect!(allow_localhost: true)
 
 module ActiveSupport
   class TestCase
-    # Run tests in parallel with specified workers
-    parallelize(workers: :number_of_processors)
+    # Single process: forked parallel workers crash on macOS (Objective-C
+    # fork-safety) once the suite crosses the 50-test threshold. The suite is
+    # fast enough that parallelism isn't needed.
+    parallelize(workers: 1)
 
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all

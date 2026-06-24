@@ -58,7 +58,7 @@ class Api::V1::TranscriptionsController < Api::BaseController
 
   def create_transcription(page)
     transcription = page.transcriptions.create!(transcription_params.merge(user: current_user))
-    text = ai_transcribe(params[:transcription][:audio_file])
+    text = ai_transcribe(params[:transcription][:audio_file], page: page, account: current_user.account)
     transcription.update!(transcription_text: text, status: :transcribed)
     transcription
   rescue Seahorse::Client::NetworkingError => e

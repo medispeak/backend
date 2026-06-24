@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_06_24_140003) do
+ActiveRecord::Schema[8.0].define(version: 2026_06_24_150003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -50,6 +50,29 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_24_140003) do
     t.bigint "blob_id", null: false
     t.string "variation_digest", null: false
     t.index ["blob_id", "variation_digest"], name: "index_active_storage_variant_records_uniqueness", unique: true
+  end
+
+  create_table "ai_models", force: :cascade do |t|
+    t.bigint "ai_provider_id", null: false
+    t.string "api_model_id", null: false
+    t.string "display_name"
+    t.jsonb "capabilities", default: {}, null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ai_provider_id"], name: "index_ai_models_on_ai_provider_id"
+  end
+
+  create_table "ai_providers", force: :cascade do |t|
+    t.string "name", null: false
+    t.string "kind", null: false
+    t.string "base_url"
+    t.text "api_key"
+    t.string "organization_id"
+    t.integer "request_timeout", default: 120, null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "api_tokens", force: :cascade do |t|
@@ -108,6 +131,19 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_24_140003) do
     t.string "maximum"
     t.string "enum_options", default: [], array: true
     t.index ["page_id"], name: "index_form_fields_on_page_id"
+  end
+
+  create_table "model_assignments", force: :cascade do |t|
+    t.string "scope_type", null: false
+    t.bigint "scope_id"
+    t.string "function", null: false
+    t.bigint "ai_model_id", null: false
+    t.bigint "fallback_ai_model_id"
+    t.jsonb "options", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ai_model_id"], name: "index_model_assignments_on_ai_model_id"
+    t.index ["scope_type", "scope_id", "function"], name: "index_model_assignments_on_scope_and_function", unique: true
   end
 
   create_table "pages", force: :cascade do |t|
@@ -173,10 +209,13 @@ ActiveRecord::Schema[8.0].define(version: 2026_06_24_140003) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "ai_models", "ai_providers"
   add_foreign_key "api_tokens", "accounts"
   add_foreign_key "api_tokens", "users"
   add_foreign_key "domains", "templates"
   add_foreign_key "form_fields", "pages"
+  add_foreign_key "model_assignments", "ai_models"
+  add_foreign_key "model_assignments", "ai_models", column: "fallback_ai_model_id"
   add_foreign_key "pages", "templates"
   add_foreign_key "pages", "webapps"
   add_foreign_key "transcriptions", "pages"

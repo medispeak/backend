@@ -1,0 +1,13 @@
+class AiProvider < ApplicationRecord
+  KINDS = %w[openai_compatible anthropic gemini].freeze
+
+  # API key encrypted at rest (Active Record Encryption).
+  encrypts :api_key
+
+  has_many :ai_models, dependent: :destroy
+
+  validates :name, presence: true
+  validates :kind, presence: true, inclusion: { in: KINDS }
+
+  scope :active, -> { where(active: true) }
+end
