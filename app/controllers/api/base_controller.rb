@@ -20,14 +20,20 @@ class Api::BaseController < ApplicationController
     request.headers.fetch("Authorization", "").split(" ").last
   end
 
+  # Digest-based lookup that also enforces active + not-expired (fixes the
+  # previous plaintext find_by that ignored the active scope, CWE-613).
   def api_token
-    @_api_token ||= ApiToken.find_by(token: token_from_header)
+    @_api_token ||= ApiToken.authenticate(token_from_header)
+  end
+
+  def current_account
+    api_token&.account
   end
 
   def user_from_token
-    if api_token.present?
-      api_token.touch(:last_used_at)
-      api_token.user
-    end
+    return unless api_token
+
+    api_token.touch(:last_used_at)
+    api_token.user
   end
 end

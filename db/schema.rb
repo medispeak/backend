@@ -10,9 +10,19 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2024_11_13_130440) do
+ActiveRecord::Schema[8.0].define(version: 2026_06_24_140003) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "accounts", force: :cascade do |t|
+    t.string "name", null: false
+    t.string "status", default: "active", null: false
+    t.jsonb "settings", default: {}, null: false
+    t.string "webhook_secret"
+    t.string "default_callback_url"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
 
   create_table "active_storage_attachments", force: :cascade do |t|
     t.string "name", null: false
@@ -51,7 +61,13 @@ ActiveRecord::Schema[8.0].define(version: 2024_11_13_130440) do
     t.boolean "active", default: true, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "account_id"
+    t.string "token_digest"
+    t.string "token_prefix"
+    t.string "scopes", default: [], array: true
+    t.index ["account_id"], name: "index_api_tokens_on_account_id"
     t.index ["token"], name: "index_api_tokens_on_token", unique: true
+    t.index ["token_digest"], name: "index_api_tokens_on_token_digest", unique: true
     t.index ["user_id"], name: "index_api_tokens_on_user_id"
   end
 
@@ -139,6 +155,8 @@ ActiveRecord::Schema[8.0].define(version: 2024_11_13_130440) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "admin"
+    t.bigint "account_id"
+    t.index ["account_id"], name: "index_users_on_account_id"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
   end
@@ -155,6 +173,7 @@ ActiveRecord::Schema[8.0].define(version: 2024_11_13_130440) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "api_tokens", "accounts"
   add_foreign_key "api_tokens", "users"
   add_foreign_key "domains", "templates"
   add_foreign_key "form_fields", "pages"
@@ -162,5 +181,6 @@ ActiveRecord::Schema[8.0].define(version: 2024_11_13_130440) do
   add_foreign_key "pages", "webapps"
   add_foreign_key "transcriptions", "pages"
   add_foreign_key "transcriptions", "users"
+  add_foreign_key "users", "accounts"
   add_foreign_key "webapps", "users"
 end
