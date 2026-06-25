@@ -48,6 +48,11 @@ module Admin
       assert_response :success
     end
 
+    test "accounts show renders" do
+      get admin_account_path(@account)
+      assert_response :success
+    end
+
     test "usage_events index renders" do
       get admin_usage_events_path
       assert_response :success

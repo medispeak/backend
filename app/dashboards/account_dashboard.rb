@@ -7,13 +7,16 @@ class AccountDashboard < Administrate::BaseDashboard
   # Each different type represents an Administrate::Field object,
   # which determines how the attribute is displayed
   # on pages throughout the dashboard.
+  # account_credit / api_tokens are shown as scalar summaries (credit_balance,
+  # api_tokens_count) rather than association links, because those models have
+  # no Administrate dashboards (linking to them would raise).
   ATTRIBUTE_TYPES = {
     id: Field::Number,
     name: Field::String,
     status: Field::String,
     settings: Field::Text,
-    account_credit: Field::HasOne,
-    api_tokens: Field::HasMany,
+    credit_balance: Field::String,
+    api_tokens_count: Field::Number,
     created_at: Field::DateTime,
     updated_at: Field::DateTime
   }.freeze
@@ -27,7 +30,7 @@ class AccountDashboard < Administrate::BaseDashboard
     id
     name
     status
-    account_credit
+    credit_balance
   ].freeze
 
   # SHOW_PAGE_ATTRIBUTES
@@ -37,8 +40,8 @@ class AccountDashboard < Administrate::BaseDashboard
     name
     status
     settings
-    account_credit
-    api_tokens
+    credit_balance
+    api_tokens_count
     created_at
     updated_at
   ].freeze

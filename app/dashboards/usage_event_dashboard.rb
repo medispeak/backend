@@ -13,7 +13,6 @@ class UsageEventDashboard < Administrate::BaseDashboard
   ATTRIBUTE_TYPES = {
     id: Field::Number,
     account: Field::BelongsTo,
-    api_token: Field::BelongsTo,
     function: Field::String,
     provider: Field::String,
     model: Field::String,
@@ -50,7 +49,6 @@ class UsageEventDashboard < Administrate::BaseDashboard
   SHOW_PAGE_ATTRIBUTES = %i[
     id
     account
-    api_token
     function
     provider
     model
