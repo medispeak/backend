@@ -1,0 +1,102 @@
+<%= form_with model: @template, data: { turbo: false } do |f| %>
+  <% if @template.errors.any? %>
+    <div class="mx-auto max-w-4xl px-4 pt-6">
+      <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p class="font-semibold"><%= pluralize(@template.errors.count, "problem") %> stopped this template from saving:</p>
+        <ul class="mt-1 list-disc pl-5">
+          <% @template.errors.full_messages.each do |message| %>
+            <li><%= message %></li>
+          <% end %>
+        </ul>
+      </div>
+    </div>
+  <% end %>
+
+  <%# Sticky action bar %>
+  <div class="sticky top-0 z-20 border-b border-gray-200 bg-white/90 backdrop-blur">
+    <div class="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
+      <div>
+        <p class="text-xs font-medium uppercase tracking-wider text-indigo-600">Template builder</p>
+        <h1 class="text-lg font-semibold tracking-tight text-gray-900">
+          <%= @template.persisted? ? "Edit template" : "New template" %>
+        </h1>
+      </div>
+      <div class="flex items-center gap-3">
+        <%= link_to "Cancel", templates_path, class: "rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900" %>
+        <%= f.submit (@template.persisted? ? "Save changes" : "Create template"),
+              class: "rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600" %>
+      </div>
+    </div>
+  </div>
+
+  <div class="mx-auto max-w-4xl space-y-8 px-4 py-8">
+    <%# Template details %>
+    <section class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold tracking-tight text-gray-900">Template details</h2>
+      <p class="mt-1 text-sm text-gray-500">Give this clinical form a clear name and description.</p>
+      <div class="mt-5 grid gap-5">
+        <div>
+          <%= f.label :name, class: "block text-sm font-medium text-gray-700" %>
+          <%= f.text_field :name, placeholder: "e.g. General Consultation",
+                class: "mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" %>
+        </div>
+        <div>
+          <%= f.label :description, class: "block text-sm font-medium text-gray-700" %>
+          <%= f.text_area :description, rows: 2, placeholder: "What is this template used for?",
+                class: "mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" %>
+        </div>
+      </div>
+    </section>
+
+    <%# AI model configuration %>
+    <section class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold tracking-tight text-gray-900">AI models</h2>
+      <p class="mt-1 text-sm text-gray-500">
+        Choose which models power this template. Leave on default to inherit the account / system models.
+      </p>
+      <div class="mt-5 grid gap-5 sm:grid-cols-2">
+        <div>
+          <label for="asr_ai_model_id" class="block text-sm font-medium text-gray-700">Speech-to-text (ASR)</label>
+          <%= select_tag :asr_ai_model_id,
+                options_for_select(ai_model_options(:can_transcribe), template_assigned_model_id(@template, :asr)),
+                include_blank: "Use default",
+                class: "mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" %>
+        </div>
+        <div>
+          <label for="structuring_ai_model_id" class="block text-sm font-medium text-gray-700">Structuring</label>
+          <%= select_tag :structuring_ai_model_id,
+                options_for_select(ai_model_options(:can_structure), template_assigned_model_id(@template, :structuring)),
+                include_blank: "Use default",
+                class: "mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" %>
+        </div>
+      </div>
+    </section>
+
+    <%# Pages + fields %>
+    <section data-controller="nested-form" data-nested-form-placeholder-value="PAGE_RECORD">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-semibold tracking-tight text-gray-900">Pages &amp; fields</h2>
+          <p class="mt-1 text-sm text-gray-500">Each page maps to a screen/form; its fields are what the AI fills in.</p>
+        </div>
+      </div>
+
+      <div data-nested-form-target="list" class="mt-5 space-y-6">
+        <%= f.fields_for :pages do |page_form| %>
+          <%= render "page_fields", f: page_form %>
+        <% end %>
+      </div>
+
+      <template data-nested-form-target="template">
+        <%= f.fields_for :pages, Page.new, child_index: "PAGE_RECORD" do |page_form| %>
+          <%= render "page_fields", f: page_form %>
+        <% end %>
+      </template>
+
+      <button type="button" data-action="nested-form#add"
+              class="mt-5 inline-flex items-center gap-2 rounded-lg border border-dashed border-indigo-300 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition hover:border-indigo-400 hover:bg-indigo-100">
+        <span class="text-lg leading-none">+</span> Add page
+      </button>
+    </section>
+  </div>
+<% end %>

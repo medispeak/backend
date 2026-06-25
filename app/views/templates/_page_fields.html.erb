@@ -1,0 +1,48 @@
+<%# local: f = page form builder %>
+<div data-nested-item
+     data-controller="nested-form"
+     data-nested-form-placeholder-value="FIELD_RECORD"
+     class="rounded-2xl border border-gray-200 bg-white shadow-sm">
+  <%= f.hidden_field :_destroy %>
+
+  <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+    <div class="flex-1">
+      <%= f.label :name, "Page name", class: "sr-only" %>
+      <%= f.text_field :name, placeholder: "Page name (e.g. History & Examination)",
+            class: "block w-full border-0 p-0 text-base font-semibold tracking-tight text-gray-900 placeholder:text-gray-300 focus:ring-0" %>
+    </div>
+    <button type="button" data-action="nested-form#remove"
+            class="shrink-0 rounded-md p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600"
+            aria-label="Remove page">
+      &times;
+    </button>
+  </div>
+
+  <div class="space-y-5 px-6 py-5">
+    <div>
+      <%= f.label :prompt, "AI instructions (optional)", class: "block text-sm font-medium text-gray-700" %>
+      <%= f.text_area :prompt, rows: 2, placeholder: "Guidance for the model when filling this page…",
+            class: "mt-1 block w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" %>
+    </div>
+
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Fields</p>
+      <div data-nested-form-target="list" class="mt-3 space-y-3">
+        <%= f.fields_for :form_fields do |field_form| %>
+          <%= render "form_field_fields", ff: field_form %>
+        <% end %>
+      </div>
+
+      <template data-nested-form-target="template">
+        <%= f.fields_for :form_fields, FormField.new, child_index: "FIELD_RECORD" do |field_form| %>
+          <%= render "form_field_fields", ff: field_form %>
+        <% end %>
+      </template>
+
+      <button type="button" data-action="nested-form#add"
+              class="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-50">
+        <span class="text-base leading-none">+</span> Add field
+      </button>
+    </div>
+  </div>
+</div>

@@ -1,5 +1,5 @@
 class ModelAssignment < ApplicationRecord
-  SCOPES = %w[System Account Page].freeze
+  SCOPES = %w[System Account Template Page].freeze
   FUNCTIONS = %w[asr structuring combined].freeze
 
   belongs_to :ai_model
@@ -15,7 +15,7 @@ class ModelAssignment < ApplicationRecord
   def scope_id_presence
     if scope_type == "System" && scope_id.present?
       errors.add(:scope_id, "must be blank for System scope")
-    elsif %w[Account Page].include?(scope_type) && scope_id.blank?
+    elsif %w[Account Template Page].include?(scope_type) && scope_id.blank?
       errors.add(:scope_id, "is required for #{scope_type} scope")
     end
   end

@@ -35,10 +35,11 @@ module Llm
       nil
     end
 
-    # Most-specific first.
+    # Most-specific first: Page -> Template -> Account -> System.
     def scopes
       result = []
       result << ["Page", @page.id] if @page
+      result << ["Template", @page.template_id] if @page&.template_id
       result << ["Account", @account.id] if @account
       result << ["System", nil]
       result

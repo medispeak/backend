@@ -40,6 +40,24 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
     assert_equal "page", cfg.api_model_id
   end
 
+  test "Template assignment overrides Account and System (but Page wins over Template)" do
+    account = create(:account)
+    template = create(:template)
+    page = create(:page, template: template)
+    create(:model_assignment, scope_type: "System", function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "sys"))
+    create(:model_assignment, scope_type: "Template", scope_id: template.id, function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "tmpl"))
+
+    cfg = Llm::ConfigResolver.call(function: :structuring, page: page, account: account)
+    assert_equal "tmpl", cfg.api_model_id
+
+    create(:model_assignment, scope_type: "Page", scope_id: page.id, function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "page"))
+    cfg2 = Llm::ConfigResolver.call(function: :structuring, page: page, account: account)
+    assert_equal "page", cfg2.api_model_id
+  end
+
   test "resolves provider details, capabilities, options, fallback, and decrypts the key" do
     provider = create(:ai_provider, api_key: "sk-xyz", base_url: "http://host:8000/", kind: "openai_compatible")
     primary = create(:ai_model, ai_provider: provider, api_model_id: "primary",

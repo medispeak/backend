@@ -241,3 +241,12 @@ button[disabled]        .when-enabled { display: none; }
 
 
 @tailwind utilities;
+
+/* Template builder: animate newly added nested page/field rows */
+[data-nested-item] {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.nested-enter {
+  opacity: 0;
+  transform: translateY(-6px);
+}
