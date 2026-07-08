@@ -37,6 +37,11 @@ module Scribe
       return @session if transcript.nil? && asr_failed?
 
       @session.scribe_outputs.each do |output|
+        # Idempotent re-commit: an already-successful output is not reprocessed
+        # or re-metered, so retrying a failed/partial session only reruns the
+        # outputs that still need it. ScribeOutput's status enum is PREFIXED.
+        next if output.status_success?
+
         stage = process_output(output, transcript)
         # Metering is best-effort and runs OUTSIDE the per-output rescue so a
         # metering failure can never demote a finalized output to :failure or
@@ -241,10 +246,24 @@ module Scribe
         result: as_llm_result(stage),
         api_token: session.api_token,
         scribe_session: session,
-        scribe_output: scribe_output
+        scribe_output: scribe_output,
+        dedupe_key: dedupe_key_for(function, scribe_output)
       )
       Metering::QuotaGuard.deduct!(event)
       event
+    end
+
+    # Deterministic dedupe_key so the unique (api_token_id, dedupe_key) index
+    # turns a retried finalize into a no-op instead of a duplicate UsageEvent.
+    # A duplicate insert raises ActiveRecord::RecordNotUnique, which the
+    # best-effort #meter rescue swallows without demoting the output. Format is a
+    # stable contract for the index — see plan 004.
+    def dedupe_key_for(function, scribe_output)
+      if scribe_output
+        "#{session.id}:#{scribe_output.id}:#{function}"
+      else
+        "#{session.id}:#{function}"
+      end
     end
 
     # Adapts a stage result struct to the Llm::Result contract the meter reads.

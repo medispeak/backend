@@ -63,6 +63,37 @@ module Api
         assert_equal({ "complaint" => "headache" }, output["result"])
       end
 
+      test "committing twice runs the pipeline once and charges each output once" do
+        # create -> audio -> commit (inline job runs the pipeline to completion)
+        post "/api/v2/scribe_sessions",
+             params: { outputs: [ { type: "form", page_id: @page.id } ], mode: "consultation" }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :created
+        session_id = JSON.parse(response.body)["id"]
+
+        post "/api/v2/scribe_sessions/#{session_id}/audio",
+             params: { audio: audio_upload },
+             headers: @headers
+        assert_response :ok
+
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+        assert_response :accepted
+
+        get "/api/v2/scribe_sessions/#{session_id}", headers: @headers
+        assert_equal "completed", JSON.parse(response.body)["status"]
+
+        first_count = UsageEvent.where(scribe_session_id: session_id).count
+        assert first_count.positive?
+
+        # Second commit from a completed session is rejected — the pipeline does
+        # not re-run and nothing new is charged.
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+        assert_response :conflict
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+
+        assert_equal first_count, UsageEvent.where(scribe_session_id: session_id).count
+      end
+
       test "commit is rejected with 402 when the account has insufficient credit" do
         # create
         post "/api/v2/scribe_sessions",

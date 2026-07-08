@@ -52,6 +52,21 @@ module Api
           return
         end
 
+        # Idempotency guard: only commit from a committable status. created and
+        # uploading are first commits; failed and partial re-commit to retry the
+        # not-yet-successful outputs (Orchestrator skips already-successful ones).
+        # processing (in flight) and completed (done) are rejected so a duplicate
+        # POST never re-runs the pipeline and double-charges. ScribeSession's
+        # status enum is UNPREFIXED, so the predicates are bare (session.created?).
+        unless session.created? || session.uploading? || session.failed? || session.partial?
+          render_error(
+            code: "validation_error",
+            message: "Session cannot be committed from status #{session.status}",
+            status: :conflict
+          )
+          return
+        end
+
         fingerprint = "commit:#{session.id}"
         with_idempotency(fingerprint) do
           token = Metering::QuotaGuard.hold!(account: current_account, estimate: commit_estimate(session))

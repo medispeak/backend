@@ -119,6 +119,32 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     assert_equal 90.0, session.reload.transcript.duration_seconds.to_f
   end
 
+  test "re-running the orchestrator does not re-meter an already-successful output" do
+    stub_asr(text: "the patient has a fever")
+    stub_chat({ "diagnosis" => "fever", "temperature" => 39 })
+
+    account = create(:account)
+    session = create(:scribe_session, account: account, language: "en")
+    attach_audio(session)
+    page = build_page_with_fields
+
+    create(:scribe_output, scribe_session: session, output_type: "transcript")
+    create(:scribe_output, scribe_session: session, output_type: "form", page: page)
+
+    # First run meters one ASR + one structuring event.
+    assert_difference("UsageEvent.count", 2) do
+      Scribe::Orchestrator.new(session).call
+    end
+
+    # Second run: successful outputs are skipped and the transcript is reused,
+    # so no output is reprocessed and nothing new is metered.
+    assert_no_difference("UsageEvent.count") do
+      Scribe::Orchestrator.new(session.reload).call
+    end
+
+    assert_equal "completed", session.reload.status
+  end
+
   test "form output fails on truncation while transcript output still succeeds => partial session" do
     stub_asr(text: "the patient has a fever")
     # finish_reason length means the structuring model truncated -> BadResponse
