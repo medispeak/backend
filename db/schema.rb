@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_08_174017) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_08_180821) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -241,6 +241,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_08_174017) do
     t.boolean "archived", default: false, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "account_id"
+    t.index ["account_id"], name: "index_templates_on_account_id"
   end
 
   create_table "transcriptions", force: :cascade do |t|
@@ -350,6 +352,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_08_174017) do
   add_foreign_key "pages", "webapps"
   add_foreign_key "scribe_outputs", "scribe_sessions"
   add_foreign_key "scribe_sessions", "accounts"
+  add_foreign_key "templates", "accounts"
   add_foreign_key "transcriptions", "pages"
   add_foreign_key "transcriptions", "users"
   add_foreign_key "transcripts", "scribe_sessions"

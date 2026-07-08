@@ -20,20 +20,32 @@ class TemplatePolicy < ApplicationPolicy
   end
 
   def edit?
-    user.present?
+    update?
   end
 
   def update?
-    edit?
+    return false unless user.present?
+
+    user.admin? || owns?
   end
 
   def destroy?
-    user.present?
+    update?
   end
 
+  # An admin may act on any template; a regular user only on their own account's.
+  # Legacy templates with no owner (account_id NULL) are admin-only-editable.
   class Scope < Scope
     def resolve
-      Template.all
+      return scope.all if user&.admin?
+
+      scope.where(account_id: user&.account_id)
     end
+  end
+
+  private
+
+  def owns?
+    user.present? && record.account_id.present? && record.account_id == user.account_id
   end
 end

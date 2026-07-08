@@ -1,4 +1,9 @@
 class Template < ApplicationRecord
+  # Optional: legacy templates predate ownership and keep account_id NULL
+  # (admin-only-editable shared config). New user-created templates are owned by
+  # the creator's account (plan 013, Path A).
+  belongs_to :account, optional: true
+
   has_many :domains, dependent: :destroy
   has_many :pages, dependent: :destroy
 

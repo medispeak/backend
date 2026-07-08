@@ -30,7 +30,7 @@ gate** — do not code past it without maintainer sign-off.
 | 010 | Add Ruby gem CVE scanning (bundler-audit) to CI | P2 | S | — | DONE |
 | 011 | Migrate off EOL Ruby 3.2.2 → 3.4.x (+ fix `.ruby-version`/`.tool-versions`) | P2 | M | — | TODO |
 | 012 | Make the webhook `delivery_id` stable across retries | P2 | S | — | DONE |
-| 013 | Stop cross-tenant editing/deletion of Templates/Pages/FormFields | P2 | M | — | TODO |
+| 013 | Stop cross-tenant editing/deletion of Templates/Pages/FormFields | P2 | M | — | DONE |
 | 014 | Validate audio uploads (content-type + size) before processing | P2 | S | — | DONE |
 | 015 | Treat truncated OpenAI-compatible 200s as transient (enable fallback) | P2 | S | — | DONE |
 | 016 | Enable a Content Security Policy (report-only → enforce) | P2 | M | — | DONE |

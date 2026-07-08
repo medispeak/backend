@@ -24,7 +24,7 @@ class TemplatesController < ApplicationController
 
   # POST /templates
   def create
-    @template = Template.new(template_params)
+    @template = Template.new(template_params.merge(account: current_user.account))
     authorize @template
 
     if @template.save
