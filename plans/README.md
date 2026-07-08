@@ -28,7 +28,7 @@ gate** — do not code past it without maintainer sign-off.
 | 008 | Filter PHI-bearing request params from the logs | P1 | S | — | DONE |
 | 009 | Throttle Devise login + password-reset endpoints | P2 | S | — | DONE |
 | 010 | Add Ruby gem CVE scanning (bundler-audit) to CI | P2 | S | — | DONE |
-| 011 | Migrate off EOL Ruby 3.2.2 → 3.4.x (+ fix `.ruby-version`/`.tool-versions`) | P2 | M | — | TODO |
+| 011 | Migrate off EOL Ruby 3.2.2 → 3.4.x (+ fix `.ruby-version`/`.tool-versions`) | P2 | M | — | DONE |
 | 012 | Make the webhook `delivery_id` stable across retries | P2 | S | — | DONE |
 | 013 | Stop cross-tenant editing/deletion of Templates/Pages/FormFields | P2 | M | — | DONE |
 | 014 | Validate audio uploads (content-type + size) before processing | P2 | S | — | DONE |
