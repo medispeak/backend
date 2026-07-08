@@ -36,7 +36,7 @@ gate** — do not code past it without maintainer sign-off.
 | 016 | Enable a Content Security Policy (report-only → enforce) | P2 | M | — | DONE |
 | 017 | Kill the `GET /api/v2/scribe_sessions` outputs N+1 + add pagination | P2 | S | — | DONE |
 | 018 | Eager-load pages+form_fields in the v1 template endpoints | P2 | S | — | DONE |
-| 019 | Add composite indexes for hot usage/sessions paths (verify with EXPLAIN) | P3 | S | — | TODO |
+| 019 | Add composite indexes for hot usage/sessions paths (verify with EXPLAIN) | P3 | S | — | DONE |
 
 Status values: TODO · IN PROGRESS · DONE · BLOCKED (one-line reason) · REJECTED (one-line rationale)
 
