@@ -213,8 +213,10 @@ module Scribe
     end
 
     # Records + deducts a usage_event for one physical attempt, best-effort.
-    # Errors are logged but never propagate (the reservation sweeper trues up the
-    # ledger for any hold left dangling by a metering failure).
+    # Errors are logged and swallowed: metering must never demote a finalized
+    # output or fail the session. A usage_event left :pending by such a failure
+    # is swept to :failed by Metering::ReservationSweeper; holds are postpaid, so
+    # no credit balance is returned.
     def meter(function:, stage:, scribe_output: nil)
       record_and_deduct(function: function, stage: stage, scribe_output: scribe_output)
     rescue StandardError => e

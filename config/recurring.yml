@@ -1,4 +1,13 @@
-# production:
+# Solid Queue recurring tasks. Only the production worker runs these (prod uses
+# the solid_queue adapter; test/dev use :inline). The `queue` must match a
+# queue the workers listen on — config/queue.yml workers listen on "*".
+production:
+  reservation_sweeper:
+    class: Metering::ReservationSweeperJob
+    queue: background
+    schedule: every 5 minutes
+
+# Example scaffolding kept for reference:
 #   periodic_cleanup:
 #     class: CleanSoftDeletedRecordsJob
 #     queue: background

@@ -20,7 +20,7 @@ gate** — do not code past it without maintainer sign-off.
 |------|-------|----------|--------|------------|--------|
 | 001 | Meter ASR at real audio duration (stop billing every transcription at $0) | P1 | M | — | DONE |
 | 002 | Enforce the credit quota at commit (make the inert gate block) | P1 | M | 001 (soft) | DONE |
-| 003 | Complete/remove the reservation lifecycle — holds, sweeper, refunds | P1 | L | 002 | TODO |
+| 003 | Complete/remove the reservation lifecycle — holds, sweeper, refunds | P1 | L | 002 | DONE |
 | 004 | Make commit idempotent so re-committing never double-charges | P1 | M | 002 (soft) | TODO |
 | 005 | Drop the plaintext `token` column; true reveal-once API tokens | P1 | M | — | TODO |
 | 006 | Validate webhook `callback_url` against SSRF + set HTTP timeouts | P1 | S | — | TODO |

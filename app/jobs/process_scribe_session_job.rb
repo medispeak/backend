@@ -10,8 +10,10 @@
 #      PHI-light completion notification.
 #
 # Any unexpected error marks the session :failed with a sanitized message and is
-# logged but NOT re-raised, so a poison job does not retry forever (the
-# reservation sweeper trues up the ledger for stuck holds).
+# logged but NOT re-raised, so a poison job does not retry forever. Metering is
+# best-effort (see Scribe::Orchestrator#meter); a usage_event left :pending is
+# swept to :failed by Metering::ReservationSweeper rather than trued up against
+# the ledger (holds are postpaid and reserve no credit balance).
 class ProcessScribeSessionJob < ApplicationJob
   def perform(scribe_session_id)
     session = ScribeSession.find_by(id: scribe_session_id)
