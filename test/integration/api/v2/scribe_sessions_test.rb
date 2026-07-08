@@ -240,7 +240,66 @@ module Api
         assert_equal 1, sessions.size
       end
 
+      test "index does not run an extra query per session (no N+1 on outputs)" do
+        s1 = create(:scribe_session, account: @account, api_token: @token, user: @user)
+        create(:scribe_output, scribe_session: s1)
+
+        q1 = count_ar_queries { get "/api/v2/scribe_sessions", headers: @headers }
+        assert_response :ok
+        body = JSON.parse(response.body)
+        assert body["scribe_sessions"].all? { |s| s.key?("outputs") }, "output shape changed"
+
+        3.times do
+          s = create(:scribe_session, account: @account, api_token: @token, user: @user)
+          create(:scribe_output, scribe_session: s)
+        end
+
+        q2 = count_ar_queries { get "/api/v2/scribe_sessions", headers: @headers }
+        assert_response :ok
+
+        assert_equal q1, q2,
+          "query count grew with more sessions -> N+1 not fixed (got #{q1} then #{q2})"
+      end
+
+      test "index respects limit and offset params" do
+        3.times { create(:scribe_session, account: @account, api_token: @token, user: @user) }
+
+        get "/api/v2/scribe_sessions", params: { limit: 2 }, headers: @headers
+        assert_response :ok
+        assert_equal 2, JSON.parse(response.body)["scribe_sessions"].size
+
+        get "/api/v2/scribe_sessions", params: { limit: 2, offset: 2 }, headers: @headers
+        assert_response :ok
+        assert_equal 1, JSON.parse(response.body)["scribe_sessions"].size
+      end
+
+      test "index caps the page size at the maximum" do
+        now = Time.current
+        rows = Array.new(105) { { account_id: @account.id, status: "created", created_at: now, updated_at: now } }
+        ScribeSession.insert_all(rows)
+
+        get "/api/v2/scribe_sessions", params: { limit: 9999 }, headers: @headers
+        assert_response :ok
+        assert_equal 100, JSON.parse(response.body)["scribe_sessions"].size
+      end
+
       private
+
+      # Counts real ActiveRecord SELECT/INSERT/UPDATE/DELETE queries issued inside the
+      # block, ignoring schema reflection, cache hits, and transaction control
+      # statements. Used to prove the list endpoint does not N+1.
+      def count_ar_queries
+        count = 0
+        callback = lambda do |_name, _start, _finish, _id, payload|
+          next if payload[:cached]
+          next if payload[:name] == "SCHEMA"
+          next if payload[:sql].to_s =~ /\A\s*(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SET|SHOW)\b/i
+
+          count += 1
+        end
+        ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { yield }
+        count
+      end
 
       def audio_upload
         file = Tempfile.new([ "clip", ".mp3" ])

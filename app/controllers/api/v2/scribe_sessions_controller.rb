@@ -4,6 +4,8 @@ module Api
   module V2
     class ScribeSessionsController < BaseController
       OUTPUT_TYPES = %w[transcript form note].freeze
+      DEFAULT_PAGE_LIMIT = 50
+      MAX_PAGE_LIMIT = 100
 
       # POST /api/v2/scribe_sessions
       def create
@@ -129,7 +131,11 @@ module Api
 
       # GET /api/v2/scribe_sessions
       def index
-        sessions = account_sessions.order(created_at: :desc).limit(50)
+        sessions = account_sessions
+                   .includes(:scribe_outputs)
+                   .order(created_at: :desc)
+                   .limit(page_limit)
+                   .offset(page_offset)
         render json: { scribe_sessions: sessions.map { |s| serialize(s) } }, status: :ok
       end
 
@@ -160,6 +166,21 @@ module Api
       # model it cannot edit; a cross-account :id therefore 404s.
       def account_sessions
         ScribeSession.where(account: current_account)
+      end
+
+      # Requested page size, clamped to [1, MAX_PAGE_LIMIT]; defaults to
+      # DEFAULT_PAGE_LIMIT when absent or non-positive.
+      def page_limit
+        requested = params[:limit].presence&.to_i
+        return DEFAULT_PAGE_LIMIT unless requested&.positive?
+
+        [ requested, MAX_PAGE_LIMIT ].min
+      end
+
+      # Requested offset, floored at 0.
+      def page_offset
+        offset = params[:offset].presence&.to_i
+        offset&.positive? ? offset : 0
       end
 
       def find_session

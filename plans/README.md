@@ -34,7 +34,7 @@ gate** — do not code past it without maintainer sign-off.
 | 014 | Validate audio uploads (content-type + size) before processing | P2 | S | — | DONE |
 | 015 | Treat truncated OpenAI-compatible 200s as transient (enable fallback) | P2 | S | — | DONE |
 | 016 | Enable a Content Security Policy (report-only → enforce) | P2 | M | — | DONE |
-| 017 | Kill the `GET /api/v2/scribe_sessions` outputs N+1 + add pagination | P2 | S | — | TODO |
+| 017 | Kill the `GET /api/v2/scribe_sessions` outputs N+1 + add pagination | P2 | S | — | DONE |
 | 018 | Eager-load pages+form_fields in the v1 template endpoints | P2 | S | — | TODO |
 | 019 | Add composite indexes for hot usage/sessions paths (verify with EXPLAIN) | P3 | S | — | TODO |
 
