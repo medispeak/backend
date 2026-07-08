@@ -63,6 +63,35 @@ module Api
         assert_equal({ "complaint" => "headache" }, output["result"])
       end
 
+      test "commit is rejected with 402 when the account has insufficient credit" do
+        # create
+        post "/api/v2/scribe_sessions",
+             params: { outputs: [ { type: "form", page_id: @page.id } ], mode: "consultation" }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :created
+        session_id = JSON.parse(response.body)["id"]
+
+        # audio upload
+        post "/api/v2/scribe_sessions/#{session_id}/audio",
+             params: { audio: audio_upload },
+             headers: @headers
+        assert_response :ok
+
+        # The setup account has no AccountCredit (unlimited); give it a zero
+        # balance so the commit hold cannot be covered.
+        create(:account_credit, account: @account, balance: 0)
+
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+        assert_response :payment_required
+        assert_equal "insufficient_credit", JSON.parse(response.body).dig("error", "code")
+
+        # No job ran (jobs are inline in test) and nothing was metered.
+        session = ScribeSession.find(session_id)
+        assert_not_includes %w[processing completed partial failed], session.status
+        assert_equal "uploading", session.status
+        assert_equal 0, UsageEvent.where(scribe_session_id: session_id).count
+      end
+
       test "cross-account access returns 404" do
         session = create(:scribe_session, account: @account, api_token: @token, user: @user)
 

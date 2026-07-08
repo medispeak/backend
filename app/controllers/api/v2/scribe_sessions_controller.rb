@@ -54,7 +54,19 @@ module Api
 
         fingerprint = "commit:#{session.id}"
         with_idempotency(fingerprint) do
-          Metering::QuotaGuard.hold!(account: current_account, estimate: 0)
+          token = Metering::QuotaGuard.hold!(account: current_account, estimate: commit_estimate(session))
+          unless token.ok?
+            # insufficient_credit is a stable, public v2 error code (402 Payment
+            # Required). Accounts with no AccountCredit row are unlimited, so
+            # hold! returns an ok token for them and commit proceeds.
+            render_error(
+              code: "insufficient_credit",
+              message: "Account has insufficient credit to process this session",
+              status: :payment_required
+            )
+            next
+          end
+
           session.update!(status: "processing")
           ProcessScribeSessionJob.perform_later(session.id)
 
@@ -76,7 +88,27 @@ module Api
         render json: { scribe_sessions: sessions.map { |s| serialize(s) } }, status: :ok
       end
 
+      # Per-minute rate used only to size the pre-flight commit hold. Deliberately
+      # coarse and above real provider cost (whisper ASR + gpt-4o-mini
+      # structuring) so the guard is conservative; the true charge is settled by
+      # QuotaGuard.deduct! after the pipeline runs. See plan 002.
+      COMMIT_ESTIMATE_RATE_PER_MINUTE = 0.02
+      # Floor so the estimate is always positive: any account with a zero or
+      # negative balance is rejected even when the measured duration rounds to ~0.
+      COMMIT_ESTIMATE_MIN_MINUTES = 1.0
+
       private
+
+      # A conservative, non-zero credit estimate for the commit hold, sized from
+      # the real audio duration (plan 001's Scribe::AudioDuration). Final cost is
+      # settled at deduct!; this only needs to be positive and roughly
+      # proportional to the audio length so a broke account is hard-blocked.
+      def commit_estimate(session)
+        blob = session.audio_files.first
+        seconds = blob ? Scribe::AudioDuration.for_blob(blob).seconds.to_f : 0.0
+        minutes = [ seconds / 60.0, COMMIT_ESTIMATE_MIN_MINUTES ].max
+        (minutes * COMMIT_ESTIMATE_RATE_PER_MINUTE).round(6)
+      end
 
       # Account-scoped session relation. Scopes through belongs_to :account
       # rather than a has_many on Account so this chunk does not depend on a

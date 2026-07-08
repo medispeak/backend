@@ -68,6 +68,11 @@ module Metering
           credit.lock!
           balance_before = credit.balance
           balance_after = balance_before + (amount * sign)
+          # Hard-block billing floor: a deduction never drives the persisted
+          # ledger negative. The full deduction is still recorded (the charge
+          # occurred, at its real amount) but balance_after is clamped at zero.
+          # Refunds (sign: +1) are unaffected. See plan 002.
+          balance_after = [ balance_after, 0 ].max if sign.negative?
 
           txn = CreditTransaction.create!(
             account_id: usage_event.account_id,

@@ -57,6 +57,23 @@ class MeteringQuotaGuardTest < ActiveSupport::TestCase
     assert_equal 12.5, txn.amount.to_f
   end
 
+  test "deduct does not drive the balance below zero" do
+    account = create(:account)
+    credit = create(:account_credit, account: account, balance: 5)
+    event = create(:usage_event, account: account, cost: 12.5)
+
+    assert_difference("CreditTransaction.count", 1) do
+      Metering::QuotaGuard.deduct!(event)
+    end
+
+    # Hard-block floor: balance clamps at zero, never -7.5.
+    assert_equal 0.0, credit.reload.balance.to_f
+    # The charge is still recorded.
+    txn = CreditTransaction.find_by(usage_event_id: event.id, txn_type: "deduction")
+    assert_not_nil txn
+    assert_equal 0.0, txn.balance_after.to_f
+  end
+
   test "deduct is idempotent under retry via the unique constraint" do
     account = create(:account)
     credit = create(:account_credit, account: account, balance: 100)
