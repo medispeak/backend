@@ -15,7 +15,7 @@
         <% @api_tokens.each do |token| %>
           <tr>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><%= token.name %></td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><%= token.token %></td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900"><%= token.token_prefix %>…</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><%= token.expires_at.strftime('%Y-%m-%d %H:%M:%S') %></td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><%= token.active ? 'Yes' : 'No' %></td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">

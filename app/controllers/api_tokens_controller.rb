@@ -16,7 +16,8 @@ class ApiTokensController < ApplicationController
   def create
     @api_token = current_user.api_tokens.new(api_token_params)
     if @api_token.save
-      redirect_to @api_token, notice: "API token was successfully created."
+      flash[:raw_token] = @api_token.raw_token
+      redirect_to @api_token, notice: "API token created. Copy it now — it will not be shown again."
     else
       render :new, status: :unprocessable_entity
     end

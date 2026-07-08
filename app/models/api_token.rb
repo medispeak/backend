@@ -10,7 +10,6 @@ class ApiToken < ApplicationRecord
   # (reveal-once). Persisted state is the digest.
   attr_reader :raw_token
 
-  validates :token, presence: true, uniqueness: true
   validates :token_digest, presence: true, uniqueness: true
   validates :expires_at, presence: true
   validates :name, presence: true
@@ -43,9 +42,6 @@ class ApiToken < ApplicationRecord
 
     raw = "#{TOKEN_PREFIX}#{SecureRandom.hex(20)}"
     @raw_token = raw
-    # Transitional dual-write: the legacy `token` column is NOT NULL until the
-    # plaintext column is dropped. Auth uses token_digest only.
-    self.token = raw
     self.token_digest = self.class.digest_for(raw)
     self.token_prefix = raw[0, 12]
   end

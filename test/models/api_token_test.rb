@@ -44,4 +44,9 @@ class ApiTokenTest < ActiveSupport::TestCase
     token.update_column(:active, false)
     assert_nil ApiToken.authenticate(token.raw_token)
   end
+
+  test "does not persist a plaintext token column" do
+    assert_not_includes ApiToken.column_names, "token",
+      "the plaintext token column must be dropped; auth uses token_digest only"
+  end
 end
