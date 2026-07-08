@@ -65,11 +65,13 @@ module Scribe
           raise Llm::Error, "no audio attached to scribe session"
         end
 
+        duration = Scribe::AudioDuration.for_blob(session.audio_files.first, file: audio_io)
+
         Scribe::AsrStage.new(config: config).call(
           audio_io,
           language: session.language,
           mode: :transcribe,
-          audio_seconds: 0
+          audio_seconds: duration.seconds
         )
       end
 
@@ -282,7 +284,9 @@ module Scribe
     # Downloads the first attached audio blob into a Tempfile (ruby-openai's
     # multipart layer needs an IO with #path, not a URL). blob.download works for
     # Disk and S3/MinIO. Yields the rewound Tempfile and always closes it.
-    # Duration is best-effort: passed as audio_seconds: 0 (ffprobe optional).
+    # Real duration is measured by Scribe::AudioDuration (exact via ffprobe/blob
+    # metadata, else a flagged byte-size estimate) and passed as audio_seconds so
+    # ASR is billed per minute rather than metered at 0.
     def with_audio
       blob = session.audio_files.first
       return yield(nil) if blob.nil?

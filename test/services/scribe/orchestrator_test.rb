@@ -89,6 +89,36 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     assert_equal %w[asr structuring], functions
   end
 
+  test "ASR usage_event is metered at the real audio duration and a non-zero cost" do
+    stub_asr(text: "the patient has a fever")
+    stub_chat({ "diagnosis" => "fever", "temperature" => 39 })
+
+    account = create(:account)
+    session = create(:scribe_session, account: account, language: "en")
+    attach_audio(session)
+    page = build_page_with_fields
+
+    create(:scribe_output, scribe_session: session, output_type: "form", page: page)
+
+    # Deterministic duration regardless of whether ffprobe exists in the runner.
+    Scribe::AudioDuration.stubs(:for_blob).returns(
+      Scribe::AudioDuration::Result.new(seconds: 90.0, estimated: false)
+    )
+
+    # The default ASR config records provider "openai_compatible" / model
+    # "whisper-1" (NOT the factory's default "openai"), so create a matching row.
+    create(:audio_model_price, provider: "openai_compatible", model: "whisper-1", price_per_minute: 0.006)
+
+    Scribe::Orchestrator.new(session).call
+
+    asr = UsageEvent.find_by(scribe_session_id: session.id, function: "asr")
+    assert_not_nil asr
+    assert_equal 90.0, asr.audio_seconds.to_f
+    assert_equal (90.0 / 60.0 * 0.006).round(6), asr.cost.to_f
+
+    assert_equal 90.0, session.reload.transcript.duration_seconds.to_f
+  end
+
   test "form output fails on truncation while transcript output still succeeds => partial session" do
     stub_asr(text: "the patient has a fever")
     # finish_reason length means the structuring model truncated -> BadResponse
