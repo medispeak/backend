@@ -42,6 +42,27 @@ if defined?(Rack::Attack)
       account_id
     end
 
+    # Devise auth endpoints are browser-facing (not under /api/) and were
+    # previously unthrottled. Guard login + password-reset against brute force /
+    # credential stuffing / reset-email abuse, keyed on IP and on submitted email.
+    DEVISE_AUTH_PATHS = [ "/users/sign_in", "/users/password" ].freeze
+
+    def self.devise_auth_request?(req)
+      req.post? && DEVISE_AUTH_PATHS.include?(req.path)
+    end
+
+    # Per-IP: caps total auth attempts from one source address.
+    throttle("devise/auth/ip", limit: 10, period: 60) do |req|
+      req.ip if devise_auth_request?(req)
+    end
+
+    # Per-email: caps attempts against a single account, independent of IP.
+    throttle("devise/auth/email", limit: 5, period: 60) do |req|
+      if devise_auth_request?(req)
+        req.params.dig("user", "email").presence&.downcase&.strip
+      end
+    end
+
     # JSON 429 with standard rate-limit headers (epoch-second Reset/Retry-After).
     self.throttled_responder = lambda do |req|
       match_data = req.env["rack.attack.match_data"] || {}

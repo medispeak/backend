@@ -48,4 +48,28 @@ class RateLimitTest < ActionDispatch::IntegrationTest
       assert_response :unauthorized
     end
   end
+
+  test "throttles repeated sign-in attempts from one IP" do
+    skip "rack-attack not installed" unless defined?(Rack::Attack)
+
+    # Vary the email so only the per-IP throttle (limit 10) accumulates.
+    10.times do |n|
+      post "/users/sign_in", params: { user: { email: "person#{n}@example.com", password: "wrong" } }
+    end
+
+    post "/users/sign_in", params: { user: { email: "person-final@example.com", password: "wrong" } }
+    assert_response :too_many_requests
+    assert_equal "rate_limited", JSON.parse(response.body).dig("error", "code")
+  end
+
+  test "throttles repeated sign-in attempts against one email" do
+    skip "rack-attack not installed" unless defined?(Rack::Attack)
+
+    5.times do
+      post "/users/sign_in", params: { user: { email: "victim@example.com", password: "wrong" } }
+    end
+
+    post "/users/sign_in", params: { user: { email: "victim@example.com", password: "wrong" } }
+    assert_response :too_many_requests
+  end
 end
