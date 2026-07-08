@@ -82,4 +82,35 @@ class ScribeSessionTest < ActiveSupport::TestCase
     assert_equal 1, session.audio_files.count
     assert_equal "recording.wav", session.audio_files.first.filename.to_s
   end
+
+  test "rejects a non-https callback_url" do
+    session = build(:scribe_session, callback_url: "http://example.com/webhook")
+    assert_not session.valid?
+    assert_match(/https/, session.errors[:callback_url].join)
+  end
+
+  test "rejects a loopback callback_url" do
+    session = build(:scribe_session, callback_url: "https://127.0.0.1/webhook")
+    assert_not session.valid?
+  end
+
+  test "rejects the cloud-metadata callback_url" do
+    session = build(:scribe_session, callback_url: "https://169.254.169.254/latest/meta-data")
+    assert_not session.valid?
+  end
+
+  test "rejects a private RFC-1918 callback_url" do
+    session = build(:scribe_session, callback_url: "https://10.0.0.5/webhook")
+    assert_not session.valid?
+  end
+
+  test "accepts a public https callback_url" do
+    session = build(:scribe_session, callback_url: "https://client.example.com/webhook")
+    assert session.valid?
+  end
+
+  test "accepts a blank callback_url" do
+    session = build(:scribe_session, callback_url: nil)
+    assert session.valid?
+  end
 end

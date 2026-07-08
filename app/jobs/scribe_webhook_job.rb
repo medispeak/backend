@@ -12,6 +12,9 @@
 # Delivery is at-least-once: Faraday transport errors are logged and swallowed
 # so ActiveJob's retry machinery (or a manual replay) can re-deliver.
 class ScribeWebhookJob < ApplicationJob
+  OPEN_TIMEOUT_SECONDS = 5
+  READ_TIMEOUT_SECONDS = 10
+
   def perform(scribe_session_id)
     session = ScribeSession.find_by(id: scribe_session_id)
     return if session.nil?
@@ -50,6 +53,8 @@ class ScribeWebhookJob < ApplicationJob
 
   def deliver(url, json, signature)
     Faraday.post(url) do |req|
+      req.options.open_timeout = OPEN_TIMEOUT_SECONDS
+      req.options.timeout = READ_TIMEOUT_SECONDS
       req.headers["Content-Type"] = "application/json"
       req.headers["X-Medispeak-Signature"] = signature
       req.body = json

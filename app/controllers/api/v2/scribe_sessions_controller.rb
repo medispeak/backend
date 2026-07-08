@@ -19,6 +19,14 @@ module Api
           end
 
           session = build_session
+          unless session.valid?
+            render_error(
+              code: "validation_error",
+              message: session.errors.full_messages.to_sentence,
+              status: :unprocessable_entity
+            )
+            next
+          end
           session.save!
           build_outputs(session, outputs)
 

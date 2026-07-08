@@ -1,4 +1,6 @@
 require "test_helper"
+require "mocha/minitest"
+require "ostruct"
 
 class ScribeWebhookJobTest < ActiveSupport::TestCase
   def build_session(callback_url:)
@@ -75,5 +77,16 @@ class ScribeWebhookJobTest < ActiveSupport::TestCase
     session = build_session(callback_url: callback_url)
 
     assert_nothing_raised { ScribeWebhookJob.perform_now(session.id) }
+  end
+
+  test "configures explicit open and read timeouts on the webhook request" do
+    captured = OpenStruct.new(headers: {}, options: OpenStruct.new)
+    Faraday.stubs(:post).yields(captured).returns(true)
+
+    session = build_session(callback_url: "https://client.example.com/webhook")
+    ScribeWebhookJob.perform_now(session.id)
+
+    assert_equal ScribeWebhookJob::OPEN_TIMEOUT_SECONDS, captured.options.open_timeout
+    assert_equal ScribeWebhookJob::READ_TIMEOUT_SECONDS, captured.options.timeout
   end
 end
