@@ -60,6 +60,25 @@ class ScribeWebhookJobTest < ActiveSupport::TestCase
     end
   end
 
+  test "delivery_id is stable across retries of the same delivery" do
+    callback_url = "https://client.example.com/webhook"
+    bodies = []
+    stub_request(:post, callback_url).to_return do |req|
+      bodies << req.body
+      { status: 200, body: "" }
+    end
+
+    session = build_session(callback_url: callback_url)
+
+    ScribeWebhookJob.perform_now(session.id)
+    ScribeWebhookJob.perform_now(session.id)
+
+    first  = JSON.parse(bodies[0])["delivery_id"]
+    second = JSON.parse(bodies[1])["delivery_id"]
+    assert_equal first, second
+    assert_match(/\A[0-9a-f-]{36}\z/, first)
+  end
+
   test "is a no-op when the session is missing" do
     assert_nothing_raised { ScribeWebhookJob.perform_now(-1) }
   end

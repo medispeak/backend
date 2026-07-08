@@ -46,9 +46,19 @@ class ScribeWebhookJob < ApplicationJob
       outputs: session.scribe_outputs.map do |output|
         { id: output.id, output_type: output.output_type, status: output.status }
       end,
-      delivery_id: SecureRandom.uuid,
+      delivery_id: delivery_id_for(session),
       sent_at: Time.now.utc.iso8601
     }
+  end
+
+  # Stable per (session, status): ActiveJob retries of the same logical delivery
+  # repeat this id so consumers can dedupe. A later status change is a new
+  # logical delivery and correctly yields a new id.
+  def delivery_id_for(session)
+    Digest::UUID.uuid_v5(
+      Digest::UUID::OID_NAMESPACE,
+      "scribe-session:#{session.id}:#{session.status}"
+    )
   end
 
   def deliver(url, json, signature)
