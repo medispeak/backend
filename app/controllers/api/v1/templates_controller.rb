@@ -1,7 +1,7 @@
 class Api::V1::TemplatesController < Api::BaseController
   # GET /api/v1/template/:id
   def show
-    @template = Template.active.find_by(id: params[:id])
+    @template = Template.active.includes(pages: :form_fields).find_by(id: params[:id])
     if @template
       render "templates/show"
     else
@@ -13,7 +13,7 @@ class Api::V1::TemplatesController < Api::BaseController
   def find_by_domain
     origin = find_host(request)
     domain = Domain.find_by(fqdn: origin)
-    @template = Template.active.find_by(id: domain&.template_id)
+    @template = Template.active.includes(pages: :form_fields).find_by(id: domain&.template_id)
 
     if @template
       render "templates/show"
