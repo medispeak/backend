@@ -41,14 +41,22 @@ module Llm
 
         response = client.chat(parameters: params)
         choice = response.dig("choices", 0) || {}
+        finish_reason = choice["finish_reason"]
         content = choice.dig("message", "content")
 
+        # A 200 that stopped early (e.g. "length") carries truncated content;
+        # don't trust it. Surface as a transient BadResponse so Caller falls back
+        # — mirrors the Anthropic adapter's missing-tool-block handling.
+        if finish_reason && !%w[stop].include?(finish_reason.to_s)
+          raise Llm::BadResponse, "model did not complete (finish_reason=#{finish_reason})"
+        end
+
         Llm::Result.new(
-          structured: content && JSON.parse(content),
+          structured: content && parse_json(content),
           model: config.api_model_id,
           provider: config.provider_kind.to_s,
           usage: usage_from(response["usage"]),
-          finish_reason: choice["finish_reason"],
+          finish_reason: finish_reason,
           latency_ms: elapsed_ms(started),
           raw: response
         )
@@ -57,6 +65,15 @@ module Llm
       end
 
       private
+
+      # A 200 whose content is not valid JSON is a truncated/garbled response,
+      # not a transport error. Map it to a transient BadResponse so Caller falls
+      # back — mirrors the Anthropic adapter.
+      def parse_json(content)
+        JSON.parse(content)
+      rescue JSON::ParserError => e
+        raise Llm::BadResponse, "provider returned unparseable JSON content: #{e.message}"
+      end
 
       def client
         @client ||= OpenAI::Client.new(client_options)

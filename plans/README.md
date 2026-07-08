@@ -32,7 +32,7 @@ gate** — do not code past it without maintainer sign-off.
 | 012 | Make the webhook `delivery_id` stable across retries | P2 | S | — | DONE |
 | 013 | Stop cross-tenant editing/deletion of Templates/Pages/FormFields | P2 | M | — | TODO |
 | 014 | Validate audio uploads (content-type + size) before processing | P2 | S | — | TODO |
-| 015 | Treat truncated OpenAI-compatible 200s as transient (enable fallback) | P2 | S | — | TODO |
+| 015 | Treat truncated OpenAI-compatible 200s as transient (enable fallback) | P2 | S | — | DONE |
 | 016 | Enable a Content Security Policy (report-only → enforce) | P2 | M | — | TODO |
 | 017 | Kill the `GET /api/v2/scribe_sessions` outputs N+1 + add pagination | P2 | S | — | TODO |
 | 018 | Eager-load pages+form_fields in the v1 template endpoints | P2 | S | — | TODO |

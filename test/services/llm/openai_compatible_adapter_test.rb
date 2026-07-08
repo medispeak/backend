@@ -96,6 +96,43 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
     end
   end
 
+  def test_truncated_content_maps_to_bad_response
+    truncated = { choices: [ { message: { content: '{"name":' }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 5, completion_tokens: 1 } }.to_json
+    stub_request(:post, "https://api.openai.com/v1/chat/completions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: truncated)
+
+    assert_raises(Llm::BadResponse) do
+      adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
+    end
+  end
+
+  def test_unparseable_json_with_stop_maps_to_bad_response
+    garbled = { choices: [ { message: { content: "not json at all" }, finish_reason: "stop" } ],
+                usage: { prompt_tokens: 5, completion_tokens: 1 } }.to_json
+    stub_request(:post, "https://api.openai.com/v1/chat/completions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: garbled)
+
+    assert_raises(Llm::BadResponse) do
+      adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
+    end
+  end
+
+  def test_caller_falls_back_on_truncated_primary
+    truncated = { choices: [ { message: { content: '{"name":' }, finish_reason: "length" } ] }.to_json
+    stub_request(:post, "https://primary.test/v1/chat/completions")
+      .to_return(status: 200, body: truncated, headers: { "Content-Type" => "application/json" })
+    stub_request(:post, "https://fallback.test/v1/chat/completions")
+      .to_return(status: 200, body: chat_body(content: { "name" => "Fallback" }), headers: { "Content-Type" => "application/json" })
+
+    fb = config(base_url: "https://fallback.test/")
+    primary = config(base_url: "https://primary.test/", fallback: fb)
+
+    result = Llm::Caller.structure(primary, messages: [ { role: "user", content: "hi" } ], schema: core_schema)
+    assert_equal({ "name" => "Fallback" }, result.structured)
+    assert_requested(:post, "https://fallback.test/v1/chat/completions", times: 1)
+  end
+
   def test_caller_falls_back_on_rate_limit
     stub_request(:post, "https://primary.test/v1/chat/completions")
       .to_return(status: 429, body: { error: {} }.to_json, headers: { "Content-Type" => "application/json" })
