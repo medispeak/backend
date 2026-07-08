@@ -40,6 +40,8 @@ gem "rack-cors", "~> 2.0.1"
 gem "json_schemer", "~> 2.3"
 # Edge throttling / rate limiting
 gem "rack-attack", "~> 6.7"
+# Declarative content-type + size validations for Active Storage attachments
+gem "active_storage_validations", "~> 1.1"
 
 
 

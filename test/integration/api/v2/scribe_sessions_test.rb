@@ -194,6 +194,30 @@ module Api
         assert_response :conflict
       end
 
+      test "audio upload rejects a non-audio content type" do
+        session = create(:scribe_session, account: @account, api_token: @token, user: @user)
+
+        post "/api/v2/scribe_sessions/#{session.id}/audio",
+             params: { audio: non_audio_upload },
+             headers: @headers
+
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+        assert_not session.reload.audio_files.attached?, "a rejected upload must not be persisted"
+      end
+
+      test "audio upload rejects an oversized file" do
+        session = create(:scribe_session, account: @account, api_token: @token, user: @user)
+
+        post "/api/v2/scribe_sessions/#{session.id}/audio",
+             params: { audio: oversized_audio_upload },
+             headers: @headers
+
+        assert_response :unprocessable_entity
+        assert_equal "audio_upload_failed", JSON.parse(response.body).dig("error", "code")
+        assert_not session.reload.audio_files.attached?, "a rejected upload must not be persisted"
+      end
+
       test "audio upload on an expired session returns 410" do
         session = create(:scribe_session, account: @account, api_token: @token,
                                           user: @user, expires_at: 1.hour.ago)
@@ -222,6 +246,24 @@ module Api
         file = Tempfile.new([ "clip", ".mp3" ])
         file.binmode
         file.write("ID3fake-audio-bytes")
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "audio/mpeg")
+      end
+
+      def non_audio_upload
+        file = Tempfile.new([ "payload", ".zip" ])
+        file.binmode
+        file.write("PKnot-a-real-zip")
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "application/zip")
+      end
+
+      # A sparse file just over the size ceiling — declared as valid audio so the
+      # size check (not the content-type check) is what rejects it.
+      def oversized_audio_upload
+        file = Tempfile.new([ "big", ".mp3" ])
+        file.binmode
+        file.truncate(ScribeSession::MAX_AUDIO_BYTES + 1)
         file.rewind
         Rack::Test::UploadedFile.new(file.path, "audio/mpeg")
       end

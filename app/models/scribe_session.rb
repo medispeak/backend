@@ -25,6 +25,20 @@ class ScribeSession < ApplicationRecord
 
   has_many_attached :audio_files
 
+  # Audio upload allowlist + ceiling. The API controllers reject bad uploads
+  # before attaching (with a surface-appropriate error); these attachment
+  # validations are defense-in-depth for any other write path. Spoofing
+  # protection is off, so this checks the declared content-type — a first-line
+  # guard against a huge or non-audio payload reaching storage/ASR (plan 014).
+  ALLOWED_AUDIO_TYPES = %w[
+    audio/mpeg audio/mp4 audio/wav audio/x-wav audio/webm audio/ogg audio/m4a audio/aac
+  ].freeze
+  MAX_AUDIO_BYTES = 25.megabytes
+
+  validates :audio_files,
+            content_type: ALLOWED_AUDIO_TYPES,
+            size: { less_than_or_equal_to: MAX_AUDIO_BYTES }
+
   enum :status, {
     created: "created",
     uploading: "uploading",

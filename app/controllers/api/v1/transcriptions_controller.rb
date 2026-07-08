@@ -7,6 +7,8 @@ class Api::V1::TranscriptionsController < Api::BaseController
     page = Page.find_by(id: params[:page_id])
     raise GenericException.new(message: "Page not found", code: :not_found) unless page
 
+    reject_invalid_audio!(params.dig(:transcription, :audio_file))
+
     transcription = create_transcription(page)
     render json: format_transcription(transcription), status: :created
   end
@@ -55,6 +57,22 @@ class Api::V1::TranscriptionsController < Api::BaseController
   end
 
   private
+
+  # Reject a non-audio or oversized upload before persisting a Transcription or
+  # calling ASR — a denial-of-wallet / storage-abuse guard (plan 014). The
+  # declared content-type is a spoofable first-line check; model validation is
+  # defense-in-depth.
+  def reject_invalid_audio!(upload)
+    invalid =
+      upload.blank? ||
+      !upload.respond_to?(:content_type) ||
+      !Transcription::ALLOWED_AUDIO_TYPES.include?(upload.content_type) ||
+      upload.size > Transcription::MAX_AUDIO_BYTES
+
+    return unless invalid
+
+    raise GenericException.new(message: "unsupported or oversized audio upload", code: :unprocessable_entity)
+  end
 
   def create_transcription(page)
     transcription = page.transcriptions.create!(transcription_params.merge(user: current_user))

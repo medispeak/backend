@@ -44,7 +44,29 @@ module Api
           return
         end
 
-        session.audio_files.attach(params[:audio])
+        upload = params[:audio]
+        if upload.blank?
+          render_error(code: "validation_error", message: "audio file is required", status: :unprocessable_entity)
+          return
+        end
+        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(upload.content_type)
+          render_error(
+            code: "validation_error",
+            message: "unsupported audio content type: #{upload.content_type}",
+            status: :unprocessable_entity
+          )
+          return
+        end
+        if upload.size > ScribeSession::MAX_AUDIO_BYTES
+          render_error(
+            code: "audio_upload_failed",
+            message: "audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes",
+            status: :unprocessable_entity
+          )
+          return
+        end
+
+        session.audio_files.attach(upload)
         session.update!(status: "uploading")
 
         render json: { id: session.id, status: session.status }, status: :ok
