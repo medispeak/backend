@@ -315,6 +315,18 @@ gpt_4o_transcribe_model = AiModel.find_or_create_by!(ai_provider: openai_provide
   m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
 end
 
+# Fast structuring model: benchmarked ~1.4s vs gpt-4o-mini ~1.5-3.3s and the
+# gpt-5 series ~3.5-9s (reasoning overhead). Newer than the 4o family and the
+# best speed/accuracy fit for clinical form extraction.
+gpt_4_1_mini_model = AiModel.find_or_create_by!(ai_provider: openai_provider, api_model_id: "gpt-4.1-mini") do |m|
+  m.display_name = "GPT-4.1 mini"
+  m.capabilities = {
+    "can_structure" => true,
+    "supports_json_schema" => true,
+    "supports_function_calling" => true
+  }
+end
+
 llama_model = AiModel.find_or_create_by!(ai_provider: openrouter_provider, api_model_id: "meta-llama/llama-3.3-70b-instruct") do |m|
   m.display_name = "Llama 3.3 70B (open source)"
   m.capabilities = {
@@ -344,7 +356,7 @@ ModelAssignment.find_or_create_by!(scope_type: "System", scope_id: nil, function
 end
 
 ModelAssignment.find_or_create_by!(scope_type: "System", scope_id: nil, function: "structuring") do |a|
-  a.ai_model = gpt_4o_mini_model
+  a.ai_model = gpt_4_1_mini_model
 end
 
 # Demonstration Page-scoped assignment showing mix-and-match across providers:
