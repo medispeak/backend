@@ -92,18 +92,43 @@ module Api
 
         seq = params.require(:seq).to_i
         upload = params.require(:chunk)
+
+        # Ingress guards mirror the single-shot `audio` action so a bad part is a
+        # clean 422 here, never a 500 at commit-time reassembly. seq is a
+        # non-negative ordering index; the content-type must be an allowed audio
+        # type; and the running total across parts must stay under the session
+        # ceiling (the chunked path must not bypass plan-014's 25MB cap).
+        if seq.negative?
+          render_error(code: "validation_error", message: "seq must be >= 0", status: :unprocessable_entity)
+          return
+        end
         if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
           render_error(code: "validation_error", message: "chunk too large", status: :unprocessable_entity)
           return
         end
+        content_type = upload.content_type.presence || "audio/webm"
+        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
+          render_error(code: "validation_error", message: "unsupported audio content type: #{content_type}", status: :unprocessable_entity)
+          return
+        end
+        other_bytes = session.audio_chunks.where.not(seq: seq)
+                             .with_attached_data.sum { |c| c.data.blob&.byte_size.to_i }
+        if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
+          render_error(code: "audio_upload_failed", message: "total audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
+          return
+        end
 
         chunk = session.audio_chunks.find_or_initialize_by(seq: seq)
-        chunk.content_type = upload.content_type.presence || chunk.content_type || "audio/webm"
+        chunk.content_type = content_type
         chunk.final = true if ActiveModel::Type::Boolean.new.cast(params[:final])
         chunk.data.attach(upload)
         chunk.save!
         session.update!(status: "uploading") if session.created?
 
+        render json: { received: seq }, status: :ok
+      rescue ActiveRecord::RecordNotUnique
+        # A concurrent upload of the same seq already stored this part. Per-seq
+        # upload is idempotent, so treat the race as success.
         render json: { received: seq }, status: :ok
       end
 

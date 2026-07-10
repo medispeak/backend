@@ -1,4 +1,5 @@
 require "test_helper"
+require "mocha/minitest"
 
 module Api
   module V2
@@ -151,6 +152,57 @@ module Api
         assert_not @session.audio_files.attached?
       end
 
+      # --- Regression tests for the adversarial-verification findings ---
+
+      # F1: a scoped session token has no account ApiToken; the idempotency store
+      # must be skipped for it so commit stays a clean 202 instead of 500ing
+      # after the account was already billed and the job enqueued.
+      test "session-token commit with an Idempotency-Key header succeeds (no 500 after billing)" do
+        post chunks_url, params: { seq: 0, chunk: chunk_upload("hello") }, headers: @auth
+        assert_response :ok
+
+        post commit_url, headers: @auth.merge("Idempotency-Key" => "browser-commit-1")
+        assert_response :accepted
+      end
+
+      # F5: a bad seq is a clean 422, never an unrescued RecordInvalid 500.
+      test "a negative seq is rejected with 422, not 500" do
+        post chunks_url, params: { seq: -1, chunk: chunk_upload("x") }, headers: @auth
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+      end
+
+      # F7: the chunked path must apply the same content-type allowlist the
+      # single-shot `audio` path does, at ingress.
+      test "a disallowed chunk content-type is rejected with 422 at ingress" do
+        post chunks_url, params: { seq: 0, chunk: bad_type_upload("x") }, headers: @auth
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+        assert_equal 0, @session.audio_chunks.count
+      end
+
+      # F2/F6: the chunked path must not bypass plan-014's 25MB session ceiling.
+      test "chunked total exceeding the 25MB session cap is rejected with 422" do
+        3.times do |i|
+          post chunks_url, params: { seq: i, chunk: sized_chunk_upload(7.megabytes) }, headers: @auth
+          assert_response :ok
+        end
+        # 21MB stored; a 4th 7MB part would make 28MB > the 25MB cap.
+        post chunks_url, params: { seq: 3, chunk: sized_chunk_upload(7.megabytes) }, headers: @auth
+        assert_response :unprocessable_entity
+        assert_equal "audio_upload_failed", JSON.parse(response.body).dig("error", "code")
+        assert_equal 3, @session.audio_chunks.count, "the over-cap part must not be stored"
+      end
+
+      # F8: a concurrent duplicate seq races past find_or_initialize_by and hits
+      # the unique index; the RecordNotUnique must be treated as idempotent.
+      test "a racing duplicate seq (RecordNotUnique) is idempotent — 200 not 500" do
+        ScribeAudioChunk.any_instance.stubs(:save!).raises(ActiveRecord::RecordNotUnique.new("dup seq"))
+        post chunks_url, params: { seq: 0, chunk: chunk_upload("x") }, headers: @auth
+        assert_response :ok
+        assert_equal 0, JSON.parse(response.body)["received"]
+      end
+
       private
 
       def chunks_url
@@ -179,6 +231,24 @@ module Api
         file = Tempfile.new([ "single", ".webm" ])
         file.binmode
         file.write(bytes)
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "audio/webm")
+      end
+
+      # A part declared with a non-audio content-type (rejected by the allowlist).
+      def bad_type_upload(bytes)
+        file = Tempfile.new([ "chunk", ".bin" ])
+        file.binmode
+        file.write(bytes)
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "application/octet-stream")
+      end
+
+      # A valid-audio part of a given byte size (sparse), for the aggregate cap.
+      def sized_chunk_upload(size)
+        file = Tempfile.new([ "chunk", ".webm" ])
+        file.binmode
+        file.truncate(size)
         file.rewind
         Rack::Test::UploadedFile.new(file.path, "audio/webm")
       end

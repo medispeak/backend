@@ -72,7 +72,12 @@ module Api
       # - Otherwise: yield, then persist the rendered response for ~24h.
       def with_idempotency(fingerprint)
         key = idempotency_key_header
-        return yield if key.blank?
+        # Skip the idempotency store when there is no key OR no account token.
+        # Session-scoped tokens carry no ApiToken, and IdempotencyKey.api_token_id
+        # is NOT NULL — persisting one would raise AFTER the block already ran
+        # (billing the account and enqueuing the job), turning a successful commit
+        # into a 500. commit's own status guard is the real dedup for that path.
+        return yield if key.blank? || current_api_token.nil?
 
         existing = IdempotencyKey.fresh.find_by(api_token: current_api_token, key: key)
 
