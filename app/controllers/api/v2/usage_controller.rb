@@ -2,6 +2,9 @@ module Api
   module V2
     # Account usage summary aggregated from finalized usage events.
     class UsageController < BaseController
+      # Account-wide usage summary: a scoped session token must not reach it.
+      before_action :require_account_token!
+
       # GET /api/v2/usage
       def show
         events = current_account.usage_events.where(status: "finalized")

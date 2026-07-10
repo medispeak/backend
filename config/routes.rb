@@ -68,6 +68,7 @@ Rails.application.routes.draw do
         member do
           post :audio
           post :commit
+          post :tokens
         end
       end
 

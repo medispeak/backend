@@ -3,6 +3,9 @@ module Api
     # Discovery endpoint: supported languages, available templates, and the
     # account's effective limits.
     class ConfigController < BaseController
+      # Account-wide discovery: a scoped session token must not reach it.
+      before_action :require_account_token!
+
       # GET /api/v2/config
       def show
         render json: {

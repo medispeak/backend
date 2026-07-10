@@ -8,9 +8,19 @@ module Api
       rescue_from Exception, with: :handle_global_exception
 
       skip_before_action :verify_authenticity_token
-      before_action :authenticate_api_token!
+      before_action :authenticate!
 
       private
+
+      # A request is authenticated if it carries EITHER a live account API token
+      # OR a valid scoped session token. Account-only actions layer
+      # `require_account_token!` on top; session-scoped actions resolve the
+      # session through `find_session`, which enforces the token's `sid`.
+      def authenticate!
+        return if current_api_token || current_session_claims
+
+        head :unauthorized
+      end
 
       # Memoized active-token resolution (digest lookup + active/expiry scope
       # enforced inside ApiToken.authenticate).
@@ -20,11 +30,21 @@ module Api
         @current_api_token = ApiToken.authenticate(bearer_token)
       end
 
+      # Memoized scoped session-token claims (`{ "sid" => Integer, "scope" =>
+      # [...] }`) or nil. Verification is a signature+expiry check — no DB row.
+      def current_session_claims
+        return @current_session_claims if defined?(@current_session_claims)
+
+        @current_session_claims = Scribe::SessionToken.verify(bearer_token)
+      end
+
       def current_account
         current_api_token&.account
       end
 
-      def authenticate_api_token!
+      # Account-only actions (create/index/tokens/config/usage) call this so a
+      # session-scoped token can never reach an account-wide surface.
+      def require_account_token!
         head :unauthorized unless current_api_token
       end
 

@@ -7,6 +7,11 @@ module Api
       DEFAULT_PAGE_LIMIT = 50
       MAX_PAGE_LIMIT = 100
 
+      # Account-wide surfaces stay account-token only; a scoped session token can
+      # never mint tokens, create sessions, or list the account's sessions.
+      # show/audio/commit accept either credential via find_session.
+      before_action :require_account_token!, only: [ :create, :index, :tokens ]
+
       # POST /api/v2/scribe_sessions
       def create
         fingerprint = Digest::SHA256.hexdigest(raw_request_body)
@@ -101,7 +106,11 @@ module Api
 
         fingerprint = "commit:#{session.id}"
         with_idempotency(fingerprint) do
-          token = Metering::QuotaGuard.hold!(account: current_account, estimate: commit_estimate(session))
+          # Meter against the session's own account. For an account-token request
+          # this is current_account (the session is account-scoped); for a scoped
+          # session token current_account is nil, so sourcing it from the session
+          # keeps the quota hold correct without widening the token's reach.
+          token = Metering::QuotaGuard.hold!(account: session.account, estimate: commit_estimate(session))
           unless token.ok?
             # insufficient_credit is a stable, public v2 error code (402 Payment
             # Required). Accounts with no AccountCredit row are unlimited, so
@@ -119,6 +128,21 @@ module Api
 
           render json: serialize(session), status: :accepted
         end
+      end
+
+      # POST /api/v2/scribe_sessions/:id/tokens  (account token only)
+      #
+      # Mints a short-lived, session-scoped token a browser client uses to drive
+      # this one session's upload/read routes without the account secret.
+      def tokens
+        session = ScribeSession.where(account: current_account).find_by(id: params[:id])
+        unless session
+          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
+          return
+        end
+
+        token, exp = Scribe::SessionToken.mint(session)
+        render json: { token: token, expires_at: exp.iso8601 }, status: :created
       end
 
       # GET /api/v2/scribe_sessions/:id
@@ -183,8 +207,16 @@ module Api
         offset&.positive? ? offset : 0
       end
 
+      # Resolves the target session for show/audio/commit under either credential.
+      # An account token scopes to the account (a foreign :id 404s, unchanged); a
+      # session token can only ever reach the single session its `sid` names.
       def find_session
-        session = account_sessions.find_by(id: params[:id])
+        session =
+          if current_api_token
+            account_sessions.find_by(id: params[:id])
+          elsif current_session_claims && current_session_claims["sid"].to_s == params[:id].to_s
+            ScribeSession.find_by(id: current_session_claims["sid"])
+          end
         unless session
           render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
           return nil
