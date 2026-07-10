@@ -6,6 +6,10 @@ module Api
       OUTPUT_TYPES = %w[transcript form note].freeze
       DEFAULT_PAGE_LIMIT = 50
       MAX_PAGE_LIMIT = 100
+      # Per-part ceiling for a chunked upload. Deliberately well under the whole-
+      # session MAX_AUDIO_BYTES: a browser streams many small parts, and a single
+      # oversized part is a client bug, not a legitimate upload.
+      MAX_CHUNK_BYTES = 8.megabytes
 
       # Account-wide surfaces stay account-token only; a scoped session token can
       # never mint tokens, create sessions, or list the account's sessions.
@@ -45,11 +49,7 @@ module Api
       def audio
         session = find_session
         return unless session
-
-        if session.expired?
-          render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
-          return
-        end
+        return if reject_expired(session)
 
         upload = params[:audio]
         if upload.blank?
@@ -79,15 +79,55 @@ module Api
         render json: { id: session.id, status: session.status }, status: :ok
       end
 
+      # POST /api/v2/scribe_sessions/:id/audio/chunks
+      #
+      # Accepts one part of a native chunked/resumable upload: a `seq` (ordering
+      # index) and a `chunk` file part. Re-POSTing a seq overwrites the stored
+      # bytes (idempotent resume), so a dropped/retried part never duplicates a
+      # row. Parts are stitched into the session's canonical audio blob at commit.
+      def audio_chunks
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+
+        seq = params.require(:seq).to_i
+        upload = params.require(:chunk)
+        if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
+          render_error(code: "validation_error", message: "chunk too large", status: :unprocessable_entity)
+          return
+        end
+
+        chunk = session.audio_chunks.find_or_initialize_by(seq: seq)
+        chunk.content_type = upload.content_type.presence || chunk.content_type || "audio/webm"
+        chunk.final = true if ActiveModel::Type::Boolean.new.cast(params[:final])
+        chunk.data.attach(upload)
+        chunk.save!
+        session.update!(status: "uploading") if session.created?
+
+        render json: { received: seq }, status: :ok
+      end
+
+      # GET /api/v2/scribe_sessions/:id/audio/status
+      #
+      # Lets a resuming client learn which parts the server already holds so it
+      # only re-sends the gaps.
+      def audio_status
+        session = find_session
+        return unless session
+
+        chunks = session.audio_chunks.order(:seq).to_a
+        render json: {
+          received_seqs: chunks.map(&:seq),
+          final_seen: chunks.any?(&:final),
+          bytes: chunks.sum { |c| c.data.blob&.byte_size.to_i }
+        }, status: :ok
+      end
+
       # POST /api/v2/scribe_sessions/:id/commit
       def commit
         session = find_session
         return unless session
-
-        if session.expired?
-          render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
-          return
-        end
+        return if reject_expired(session)
 
         # Idempotency guard: only commit from a committable status. created and
         # uploading are first commits; failed and partial re-commit to retry the
@@ -100,6 +140,24 @@ module Api
             code: "validation_error",
             message: "Session cannot be committed from status #{session.status}",
             status: :conflict
+          )
+          return
+        end
+
+        # Browser clients upload via chunked parts; stitch them into the session's
+        # canonical audio blob so the Orchestrator path below runs unchanged. This
+        # sits BEFORE the quota hold (plan 002) and OUTSIDE with_idempotency so a
+        # no-audio commit is a plain, retryable 422 and never a cached response.
+        # The audio_files.blank? guard makes it a no-op once a blob exists (a
+        # single-shot upload or a prior reassembly), so a retried commit is safe.
+        if session.audio_files.blank? && session.audio_chunks.exists?
+          Scribe::ChunkAssembler.assemble!(session)
+        end
+        if session.audio_files.blank?
+          render_error(
+            code: "audio_upload_failed",
+            message: "No audio uploaded for this session",
+            status: :unprocessable_entity
           )
           return
         end
@@ -222,6 +280,17 @@ module Api
           return nil
         end
         session
+      end
+
+      # Renders the shared 410 session_expired envelope and returns true when the
+      # session has passed its expiry, so callers can guard with
+      # `return if reject_expired(session)`. Extracted from the guard originally
+      # inlined in audio/commit and now shared with audio_chunks.
+      def reject_expired(session)
+        return false unless session.expired?
+
+        render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
+        true
       end
 
       def build_session

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_10_120000) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_10_130000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -202,6 +202,17 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_10_120000) do
     t.index ["webapp_id"], name: "index_pages_on_webapp_id"
   end
 
+  create_table "scribe_audio_chunks", force: :cascade do |t|
+    t.bigint "scribe_session_id", null: false
+    t.integer "seq", null: false
+    t.boolean "final", default: false, null: false
+    t.string "content_type"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["scribe_session_id", "seq"], name: "index_scribe_audio_chunks_on_scribe_session_id_and_seq", unique: true
+    t.index ["scribe_session_id"], name: "index_scribe_audio_chunks_on_scribe_session_id"
+  end
+
   create_table "scribe_outputs", force: :cascade do |t|
     t.bigint "scribe_session_id", null: false
     t.string "output_type", null: false
@@ -353,6 +364,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_10_120000) do
   add_foreign_key "model_assignments", "ai_models", column: "fallback_ai_model_id"
   add_foreign_key "pages", "templates"
   add_foreign_key "pages", "webapps"
+  add_foreign_key "scribe_audio_chunks", "scribe_sessions"
   add_foreign_key "scribe_outputs", "scribe_sessions"
   add_foreign_key "scribe_sessions", "accounts"
   add_foreign_key "templates", "accounts"

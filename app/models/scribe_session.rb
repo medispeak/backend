@@ -21,6 +21,7 @@ class ScribeSession < ApplicationRecord
   belongs_to :user, optional: true
 
   has_many :scribe_outputs, dependent: :destroy
+  has_many :audio_chunks, class_name: "ScribeAudioChunk", dependent: :destroy
   has_one :transcript, dependent: :destroy
 
   has_many_attached :audio_files
