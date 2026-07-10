@@ -56,7 +56,8 @@ module Api
           render_error(code: "validation_error", message: "audio file is required", status: :unprocessable_entity)
           return
         end
-        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(upload.content_type)
+        content_type = base_audio_type(upload.content_type)
+        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
           render_error(
             code: "validation_error",
             message: "unsupported audio content type: #{upload.content_type}",
@@ -73,7 +74,13 @@ module Api
           return
         end
 
-        session.audio_files.attach(upload)
+        # Attach with the normalized (parameter-stripped) content-type so the
+        # blob passes the model's audio-type validation and ASR sees a clean type.
+        session.audio_files.attach(
+          io: upload.tempfile.tap(&:rewind),
+          filename: upload.original_filename,
+          content_type: content_type
+        )
         session.update!(status: "uploading")
 
         render json: { id: session.id, status: session.status }, status: :ok
@@ -106,9 +113,9 @@ module Api
           render_error(code: "validation_error", message: "chunk too large", status: :unprocessable_entity)
           return
         end
-        content_type = upload.content_type.presence || "audio/webm"
+        content_type = base_audio_type(upload.content_type).presence || "audio/webm"
         unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
-          render_error(code: "validation_error", message: "unsupported audio content type: #{content_type}", status: :unprocessable_entity)
+          render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
           return
         end
         other_bytes = session.audio_chunks.where.not(seq: seq)
@@ -316,6 +323,13 @@ module Api
 
         render_error(code: "session_expired", message: "Scribe session has expired", status: :gone)
         true
+      end
+
+      # Browser MediaRecorder sends content-types like "audio/webm;codecs=opus".
+      # Compare (and store) the base MIME type, stripped of any parameters, so it
+      # matches ScribeSession::ALLOWED_AUDIO_TYPES.
+      def base_audio_type(content_type)
+        content_type.to_s.split(";").first.to_s.strip.downcase
       end
 
       def build_session

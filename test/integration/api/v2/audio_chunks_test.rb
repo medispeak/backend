@@ -203,6 +203,20 @@ module Api
         assert_equal 0, JSON.parse(response.body)["received"]
       end
 
+      # Browser MediaRecorder sends "audio/webm;codecs=opus"; the base type must
+      # be accepted and stored normalized (so reassembly + ASR see "audio/webm").
+      test "a codec-parameterized content-type is accepted and normalized" do
+        file = Tempfile.new([ "chunk", ".webm" ])
+        file.binmode
+        file.write("opus-bytes")
+        file.rewind
+        upload = Rack::Test::UploadedFile.new(file.path, "audio/webm;codecs=opus")
+
+        post chunks_url, params: { seq: 0, chunk: upload }, headers: @auth
+        assert_response :ok
+        assert_equal "audio/webm", @session.audio_chunks.find_by(seq: 0).content_type
+      end
+
       private
 
       def chunks_url
