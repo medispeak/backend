@@ -72,15 +72,18 @@ module Scribe
     # the persisted Transcript, or nil if ASR failed (in which case the session
     # and all outputs have already been marked failed).
     #
-    # When transcription SEGMENTS exist (plan 022 incremental path) the
-    # transcript is assembled from their ordered texts — each segment was already
-    # transcribed + metered on arrival, so there is no whole-file ASR re-download
-    # in the happy path. With no segments (flag off, or single-shot/chunked
+    # When the incremental flag is ON and transcription SEGMENTS exist (plan 022
+    # incremental path) the transcript is assembled from their ordered texts —
+    # each segment was already transcribed + metered on arrival, so there is no
+    # whole-file ASR re-download in the happy path. Otherwise (flag off — even if
+    # stale segments exist from before it was flipped — or single-shot/chunked
     # storage only) the whole-file path runs and meters :asr exactly as before.
+    # Gating on the flag here makes SCRIBE_INCREMENTAL_ASR=false a true kill
+    # switch: every commit routes through the proven whole-file path immediately.
     def ensure_transcript!
       return session.transcript if session.transcript.present?
 
-      if session.transcript_segments.exists?
+      if Scribe::Incremental.enabled? && session.transcript_segments.exists?
         transcript_from_segments!
       else
         transcript_from_whole_file!(meter: true)
