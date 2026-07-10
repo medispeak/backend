@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_10_130000) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_10_221930) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -248,6 +248,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_10_130000) do
     t.index ["user_id"], name: "index_scribe_sessions_on_user_id"
   end
 
+  create_table "scribe_transcript_segments", force: :cascade do |t|
+    t.bigint "scribe_session_id", null: false
+    t.integer "seq", null: false
+    t.string "content_type"
+    t.text "text"
+    t.string "language"
+    t.string "status", default: "pending", null: false
+    t.string "provider"
+    t.string "model"
+    t.float "duration_seconds"
+    t.datetime "transcribed_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["scribe_session_id", "seq"], name: "index_scribe_transcript_segments_on_scribe_session_id_and_seq", unique: true
+    t.index ["scribe_session_id"], name: "index_scribe_transcript_segments_on_scribe_session_id"
+  end
+
   create_table "templates", force: :cascade do |t|
     t.string "name", null: false
     t.string "description", null: false
@@ -367,6 +384,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_10_130000) do
   add_foreign_key "scribe_audio_chunks", "scribe_sessions"
   add_foreign_key "scribe_outputs", "scribe_sessions"
   add_foreign_key "scribe_sessions", "accounts"
+  add_foreign_key "scribe_transcript_segments", "scribe_sessions"
   add_foreign_key "templates", "accounts"
   add_foreign_key "transcriptions", "pages"
   add_foreign_key "transcriptions", "users"

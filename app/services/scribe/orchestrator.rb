@@ -71,9 +71,33 @@ module Scribe
     # Runs ASR a single time for the session (shared by every output). Returns
     # the persisted Transcript, or nil if ASR failed (in which case the session
     # and all outputs have already been marked failed).
+    #
+    # When transcription SEGMENTS exist (plan 022 incremental path) the
+    # transcript is assembled from their ordered texts — each segment was already
+    # transcribed + metered on arrival, so there is no whole-file ASR re-download
+    # in the happy path. With no segments (flag off, or single-shot/chunked
+    # storage only) the whole-file path runs and meters :asr exactly as before.
     def ensure_transcript!
       return session.transcript if session.transcript.present?
 
+      if session.transcript_segments.exists?
+        transcript_from_segments!
+      else
+        transcript_from_whole_file!(meter: true)
+      end
+    rescue Llm::Error => e
+      mark_asr_failure!(e)
+      @asr_failed = true
+      nil
+    end
+
+    # Runs ASR once on the whole reassembled audio blob and persists a
+    # Transcript. The normal flag-off / no-segments path calls this with
+    # meter: true and meters :asr exactly as before. The segment-failure safety
+    # net (below) calls it with meter: false so it re-transcribes for
+    # COMPLETENESS ONLY without recording a second :asr usage_event — the
+    # already-metered segments are the billed quantity.
+    def transcript_from_whole_file!(meter: true)
       config = Llm::ConfigResolver.call(function: :asr, account: session.account)
 
       asr_result = with_audio do |audio_io|
@@ -93,14 +117,72 @@ module Scribe
 
       transcript = persist_transcript!(asr_result)
       # Metering is best-effort: a failure here must NOT fail the session once
-      # the transcript has persisted successfully. Record outside the Llm::Error
-      # rescue so a metering bug can't masquerade as an ASR failure.
-      meter(function: :asr, stage: asr_result)
+      # the transcript has persisted successfully. `meter(function: :asr, ...)`
+      # is a method call (parens) even though a boolean local `meter` shadows the
+      # bareword; `if meter` reads that local. Skipped on the safety-net path so
+      # the fallback never double-charges an already-metered segment set.
+      meter(function: :asr, stage: asr_result) if meter
       transcript
-    rescue Llm::Error => e
-      mark_asr_failure!(e)
-      @asr_failed = true
-      nil
+    end
+
+    # Builds the Transcript from the ordered segment texts, finishing any
+    # trailing segment inline first (through the segment job's SAME atomic claim,
+    # so an in-flight async job is never double-called). Falls back to a
+    # whole-file ASR pass ONLY when a segment is still failed after the inline
+    # finish (a coverage gap) — and that fallback is NOT re-metered, because each
+    # done segment was already metered by its own job.
+    def transcript_from_segments!
+      finish_incomplete_segments!
+      segments = session.transcript_segments.reload.order(:seq).to_a
+
+      # COMPLETENESS-ONLY fallback: a still-failed segment is a gap, so
+      # re-transcribe the whole file for coverage WITHOUT metering. The
+      # per-segment key "<sid>:segment:<segid>:asr" and the whole-file key
+      # "<sid>:asr" are DISTINCT, so the unique usage-event index would NOT
+      # dedupe a second charge — the fallback must SKIP metering, accepting the
+      # already-metered segments as the billed quantity (a small under-bill for
+      # the failed gap).
+      return transcript_from_whole_file!(meter: false) if segments.any?(&:status_failed?)
+
+      done = segments.select(&:status_done?)
+      Transcript.create!(
+        scribe_session: session,
+        text: done.map(&:text).reject(&:blank?).join(" "),
+        language: done.map(&:language).compact.first,
+        duration_seconds: done.sum { |s| s.duration_seconds.to_f },
+        provider: done.first&.provider,
+        model: done.first&.model
+      )
+    end
+
+    # Finish every not-yet-done segment before assembly, without ever
+    # double-transcribing:
+    #   - transcribing: an async job already claimed it — WAIT for it to settle
+    #     rather than re-invoking the provider.
+    #   - pending/failed: transcribe inline via perform_now, which goes through
+    #     the SAME atomic claim, so if the async job wins the race this no-ops.
+    def finish_incomplete_segments!
+      session.transcript_segments.where.not(status: "done").find_each do |segment|
+        if segment.status_transcribing?
+          wait_for_segment(segment)
+        else
+          TranscribeSegmentJob.perform_now(segment.id)
+        end
+      end
+    end
+
+    # Bounded poll: give an in-flight async TranscribeSegmentJob time to reach a
+    # settled status (done/failed) before assembly. Never calls the provider.
+    def wait_for_segment(segment, timeout: 15.seconds, interval: 0.5)
+      deadline = Time.current + timeout
+      loop do
+        segment.reload
+        return segment unless segment.status_transcribing?
+        break if Time.current >= deadline
+
+        sleep interval
+      end
+      segment
     end
 
     def asr_failed?

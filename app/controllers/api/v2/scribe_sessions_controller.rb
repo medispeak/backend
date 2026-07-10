@@ -155,6 +155,73 @@ module Api
         }, status: :ok
       end
 
+      # POST /api/v2/scribe_sessions/:id/audio/segments
+      #
+      # Accepts one STANDALONE, independently-decodable transcription segment: a
+      # `seq` and a `segment` file part. Each segment is transcribed on arrival by
+      # TranscribeSegmentJob through the same provider ASR seam, and the final
+      # transcript is assembled from the ordered segment texts at commit. This is
+      # a SEPARATE stream from the storage `audio/chunks` upload and is NOT
+      # counted against the 25MB storage cap — dual-upload doubles audio bytes by
+      # design. Re-POSTing a seq is idempotent. Gated behind the incremental
+      # feature flag: when OFF the surface simply does not exist (404).
+      def audio_segments
+        unless Scribe::Incremental.enabled?
+          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
+          return
+        end
+
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+
+        seq = params.require(:seq).to_i
+        upload = params.require(:segment)
+
+        # Ingress guards mirror the storage `audio/chunks` action so a bad part is
+        # a clean 422 here, never a 500 in the segment job. seq is a non-negative
+        # ordering index; the content-type must be an allowed audio type; and the
+        # running total across the OTHER segments must stay under the per-session
+        # segment ceiling (reusing MAX_AUDIO_BYTES — segments are NOT counted
+        # against the storage cap).
+        if seq.negative?
+          render_error(code: "validation_error", message: "seq must be >= 0", status: :unprocessable_entity)
+          return
+        end
+        if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
+          render_error(code: "validation_error", message: "segment too large", status: :unprocessable_entity)
+          return
+        end
+        content_type = base_audio_type(upload.content_type).presence || "audio/webm"
+        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
+          render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
+          return
+        end
+        other_bytes = session.transcript_segments.where.not(seq: seq)
+                             .with_attached_data.sum { |s| s.data.blob&.byte_size.to_i }
+        if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
+          render_error(code: "audio_upload_failed", message: "total segment audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
+          return
+        end
+
+        segment = session.transcript_segments.find_or_initialize_by(seq: seq)
+        segment.content_type = content_type
+        segment.data.attach(upload)
+        segment.save!
+        session.update!(status: "uploading") if session.created?
+
+        # Transcribe on arrival through the provider seam. The job's atomic claim
+        # makes a re-POST of an already-done seq a no-op, so this never
+        # re-transcribes.
+        TranscribeSegmentJob.perform_later(segment.id)
+
+        render json: { received: seq }, status: :ok
+      rescue ActiveRecord::RecordNotUnique
+        # A concurrent upload of the same seq already stored this part. Per-seq
+        # upload is idempotent, so treat the race as success.
+        render json: { received: seq }, status: :ok
+      end
+
       # POST /api/v2/scribe_sessions/:id/commit
       def commit
         session = find_session
@@ -244,7 +311,7 @@ module Api
       # GET /api/v2/scribe_sessions
       def index
         sessions = account_sessions
-                   .includes(:scribe_outputs, :transcript)
+                   .includes(:scribe_outputs, :transcript, :transcript_segments)
                    .order(created_at: :desc)
                    .limit(page_limit)
                    .offset(page_offset)

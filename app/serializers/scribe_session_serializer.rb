@@ -23,14 +23,20 @@ class ScribeSessionSerializer
   # Top-level transcript, sourced from the session's has_one :transcript so
   # clients read it without depending on output ordering (plan 021). Additive:
   # the per-output "transcript" output is still serialized unchanged, so the
-  # SDK's extractTranscript keeps working. Plan 022 will populate this field
-  # with the live (pre-commit) transcript — keep the "transcript" key name and
+  # SDK's extractTranscript keeps working. Keep the "transcript" key name and
   # { text:, language: } shape stable.
+  #
+  # Post-commit the persisted Transcript is authoritative; DURING recording
+  # (plan 022) fall back to the growing live transcript assembled from the done
+  # segments, tagged with the session's language hint. nil when neither exists.
   def serialize_transcript
     transcript = @session.transcript
-    return nil if transcript.nil?
+    return { text: transcript.text, language: transcript.language } if transcript
 
-    { text: transcript.text, language: transcript.language }
+    live = @session.live_transcript
+    return nil if live.blank?
+
+    { text: live, language: @session.language }
   end
 
   def serialize_output(output)

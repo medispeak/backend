@@ -70,6 +70,7 @@ Rails.application.routes.draw do
           post :commit
           post :tokens
           post "audio/chunks", to: "scribe_sessions#audio_chunks"
+          post "audio/segments", to: "scribe_sessions#audio_segments"
           get "audio/status", to: "scribe_sessions#audio_status"
         end
       end

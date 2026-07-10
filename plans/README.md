@@ -39,7 +39,7 @@ gate** — do not code past it without maintainer sign-off.
 | 019 | Add composite indexes for hot usage/sessions paths (verify with EXPLAIN) | P3 | S | — | DONE |
 | 020 | Assemble chunked audio once, transcribe without a second full-file download | P2 | M | — | DONE |
 | 021 | Surface the transcript the instant ASR lands (decouple from form-fill) | P2 | S-M | — | DONE |
-| 022 | Incremental per-segment transcription through the provider seam | P2 | L | 020, 021 (soft) | TODO |
+| 022 | Incremental per-segment transcription through the provider seam | P2 | L | 020, 021 (soft) | DONE |
 | 023 | Run Solid Queue in a dedicated worker so jobs start promptly | P3 | S | — | DONE |
 
 Status values: TODO · IN PROGRESS · DONE · BLOCKED (one-line reason) · REJECTED (one-line rationale)

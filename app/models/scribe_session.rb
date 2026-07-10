@@ -22,6 +22,7 @@ class ScribeSession < ApplicationRecord
 
   has_many :scribe_outputs, dependent: :destroy
   has_many :audio_chunks, class_name: "ScribeAudioChunk", dependent: :destroy
+  has_many :transcript_segments, class_name: "ScribeTranscriptSegment", dependent: :destroy
   has_one :transcript, dependent: :destroy
 
   has_many_attached :audio_files
@@ -59,6 +60,25 @@ class ScribeSession < ApplicationRecord
 
   def expired?
     expires_at.present? && expires_at < Time.current
+  end
+
+  # The growing transcript DURING recording: the done segments' texts, in seq
+  # order, joined. nil once committed (the persisted Transcript is then
+  # authoritative) or before any segment finishes ASR.
+  #
+  # Guarded to uploading/processing only so created and terminal sessions never
+  # touch the segments association — this keeps the index endpoint's N+1 guard
+  # green. Computed in Ruby from the (preloadable) loaded association, not via a
+  # .where query, so an eager-loaded relation is reused instead of re-queried.
+  def live_transcript
+    return nil unless uploading? || processing?
+
+    transcript_segments.select(&:status_done?)
+                       .sort_by(&:seq)
+                       .map(&:text)
+                       .reject(&:blank?)
+                       .join(" ")
+                       .presence
   end
 
   private
