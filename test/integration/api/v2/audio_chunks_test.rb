@@ -142,6 +142,30 @@ module Api
                      "chunked resume-then-commit must persist the same transcript as the single-shot upload"
       end
 
+      test "chunked-only commit attaches audio_files and produces a transcript when NO commit-time blob was uploaded" do
+        parts = { 2 => "world", 0 => "hel", 1 => "lo " }
+        parts.each do |seq, bytes|
+          post chunks_url, params: { seq: seq, chunk: chunk_upload(bytes) }, headers: @auth
+          assert_response :ok
+        end
+
+        # Assembly is deferred to the processing job: no blob is attached at
+        # upload/commit ingress, only after the job runs.
+        assert_not @session.reload.audio_files.attached?,
+                   "chunks must not be assembled into a blob before commit"
+
+        post commit_url, headers: @auth
+        assert_response :accepted
+
+        # The job ran inline: it assembled the chunks into one tempfile, attached
+        # it, and transcribed from it — all with no commit-time blob.
+        @session.reload
+        assert @session.audio_files.attached?, "the job must attach audio_files during processing"
+        assert_equal "hello world", @session.audio_files.first.download,
+                     "reassembled audio must equal the ordered concatenation of the chunk bytes"
+        assert_not_nil @session.transcript
+      end
+
       test "commit with no single-shot blob and no chunks returns 422 audio_upload_failed" do
         post commit_url, headers: @auth
         assert_response :unprocessable_entity

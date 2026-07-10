@@ -312,42 +312,16 @@ module Scribe
       end
     end
 
-    # Downloads the first attached audio blob into a Tempfile (ruby-openai's
-    # multipart layer needs an IO with #path, not a URL). blob.download works for
-    # Disk and S3/MinIO. Yields the rewound Tempfile and always closes it.
-    # Real duration is measured by Scribe::AudioDuration (exact via ffprobe/blob
-    # metadata, else a flagged byte-size estimate) and passed as audio_seconds so
-    # ASR is billed per minute rather than metered at 0.
-    def with_audio
-      blob = session.audio_files.first
-      return yield(nil) if blob.nil?
-
-      tmp = Tempfile.new(["audio", audio_extension(blob)])
-      tmp.binmode
-      tmp.write(blob.download)
-      tmp.rewind
-      begin
-        yield tmp
-      ensure
-        tmp.close!
-      end
-    end
-
-    # Provider ASR endpoints (e.g. OpenAI Whisper) infer the audio format from
-    # the file's EXTENSION, so the downloaded tempfile must carry a real audio
-    # extension — never ".bin", which Whisper rejects with "Invalid file format".
-    # Prefer the uploaded filename's extension; fall back to the content-type.
-    CONTENT_TYPE_EXT = {
-      "audio/mpeg" => ".mp3", "audio/mp3" => ".mp3", "audio/mp4" => ".mp4",
-      "audio/wav" => ".wav", "audio/x-wav" => ".wav", "audio/webm" => ".webm",
-      "audio/ogg" => ".ogg", "audio/m4a" => ".m4a", "audio/aac" => ".aac"
-    }.freeze
-
-    def audio_extension(blob)
-      from_name = File.extname(blob.filename.to_s).downcase
-      return from_name if from_name.present?
-
-      CONTENT_TYPE_EXT[blob.content_type] || ".mp3"
+    # Yields a rewound Tempfile of the full session audio (ruby-openai's
+    # multipart layer needs an IO with #path, not a URL) and always closes it.
+    # Delegates to Scribe::AudioSource, which reads the content exactly once —
+    # from the attached blob, or by assembling chunks into one tempfile it also
+    # attaches — so ASR is fed without a second full-file download. Real duration
+    # is measured by Scribe::AudioDuration (exact via ffprobe/blob metadata, else
+    # a flagged byte-size estimate) and passed as audio_seconds so ASR is billed
+    # per minute rather than metered at 0.
+    def with_audio(&block)
+      Scribe::AudioSource.with_audio(session, &block)
     end
   end
 end

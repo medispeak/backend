@@ -176,16 +176,14 @@ module Api
           return
         end
 
-        # Browser clients upload via chunked parts; stitch them into the session's
-        # canonical audio blob so the Orchestrator path below runs unchanged. This
-        # sits BEFORE the quota hold (plan 002) and OUTSIDE with_idempotency so a
-        # no-audio commit is a plain, retryable 422 and never a cached response.
-        # The audio_files.blank? guard makes it a no-op once a blob exists (a
-        # single-shot upload or a prior reassembly), so a retried commit is safe.
-        if session.audio_files.blank? && session.audio_chunks.exists?
-          Scribe::ChunkAssembler.assemble!(session)
-        end
-        if session.audio_files.blank?
+        # A committable session must have SOME audio: either a single-shot blob or at
+        # least one uploaded chunk. Chunk reassembly is deferred to the processing job
+        # (Scribe::AudioSource) so the audio content is read exactly once on the way to
+        # ASR — the job assembles and transcribes from a single tempfile rather than
+        # assembling here and re-downloading the blob for ASR. This guard sits BEFORE the
+        # quota hold and OUTSIDE with_idempotency so a no-audio commit is a plain,
+        # retryable 422 and never a cached response.
+        if session.audio_files.blank? && !session.audio_chunks.exists?
           render_error(
             code: "audio_upload_failed",
             message: "No audio uploaded for this session",
@@ -270,7 +268,14 @@ module Api
       # proportional to the audio length so a broke account is hard-blocked.
       def commit_estimate(session)
         blob = session.audio_files.first
-        seconds = blob ? Scribe::AudioDuration.for_blob(blob).seconds.to_f : 0.0
+        seconds =
+          if blob
+            Scribe::AudioDuration.for_blob(blob).seconds.to_f
+          else
+            chunk_bytes = session.audio_chunks.with_attached_data
+                                 .sum { |c| c.data.blob&.byte_size.to_i }
+            chunk_bytes / Scribe::AudioDuration::ESTIMATE_BYTES_PER_SECOND
+          end
         minutes = [ seconds / 60.0, COMMIT_ESTIMATE_MIN_MINUTES ].max
         (minutes * COMMIT_ESTIMATE_RATE_PER_MINUTE).round(6)
       end

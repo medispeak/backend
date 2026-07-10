@@ -37,8 +37,49 @@ gate** — do not code past it without maintainer sign-off.
 | 017 | Kill the `GET /api/v2/scribe_sessions` outputs N+1 + add pagination | P2 | S | — | DONE |
 | 018 | Eager-load pages+form_fields in the v1 template endpoints | P2 | S | — | DONE |
 | 019 | Add composite indexes for hot usage/sessions paths (verify with EXPLAIN) | P3 | S | — | DONE |
+| 020 | Assemble chunked audio once, transcribe without a second full-file download | P2 | M | — | DONE |
+| 021 | Surface the transcript the instant ASR lands (decouple from form-fill) | P2 | S-M | — | TODO |
+| 022 | Incremental per-segment transcription through the provider seam | P2 | L | 020, 021 (soft) | TODO |
+| 023 | Run Solid Queue in a dedicated worker so jobs start promptly | P3 | S | — | TODO |
 
 Status values: TODO · IN PROGRESS · DONE · BLOCKED (one-line reason) · REJECTED (one-line rationale)
+
+## Snappy / Incremental / Durable Scribe (020–023 + cross-repo)
+
+A single workstream spanning three repos, planned 2026-07-11 and reviewed adversarially
+before implementation. Goal: make the scribe UX snappy, add an incremental "real-time
+feel", and make the browser client forgiving of network failure — while keeping ASR
+**provider-agnostic** (Whisper today, swappable per client via `model_assignments`) and
+the chunking-and-display UX identical across every model.
+
+Three layers, shipped in order:
+
+- **Layer 0 — durable/forgiving capture** (SDK 001): IndexedDB is the source of truth,
+  nothing deletes until commit acks, playback + `retry()` on interruption, resume after
+  reload. The safety floor — a network blip never loses a consultation.
+- **Layer 1 — snappy baseline** (backend 020, 021, 023; FE 001 display): one downstream
+  round-trip, transcript surfaced the instant ASR lands, jobs start promptly. Works well
+  with no real-time streaming.
+- **Layer 2 — incremental real-time feel** (backend 022; SDK 002; FE 001 live view):
+  standalone transcription segments transcribed on arrival through the same ASR seam;
+  final transcript is the concatenation of segment texts — no whole-file re-download.
+
+**Cross-repo companion plans** (own repos, own `plans/` index):
+
+| Plan | Repo | Title | Depends on |
+|------|------|-------|------------|
+| SDK 001 | `scribe-ts-sdk` | Durable, forgiving capture (IndexedDB + retry + playback) | — |
+| SDK 002 | `scribe-ts-sdk` | Live transcription segments + during-recording poll | SDK 001, backend 022 |
+| FE 001  | `care-medispeak-fe` | Progressive transcript + retry/playback UX | SDK 001/002, backend 021/022 |
+
+**Recommended build order**: SDK 001 (floor) → backend 020 + 021 + FE 001 display
+(snappy baseline, shippable) → backend 022 + SDK 002 (incremental) → backend 023 (ops).
+020 and 021 are independent of each other; 022 soft-depends on both (shared audio path +
+serializer transcript field). Design decisions settled in review: incremental ASR meters
+**postpaid per segment and never hard-blocks mid-recording**; the whole-file fallback on
+segment failure re-transcribes for completeness **without re-metering** (no double-charge);
+the storage recording (one playable file) is always required at commit — segments are an
+overlay, not a substitute.
 
 ## Dependency notes
 
