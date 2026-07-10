@@ -152,15 +152,25 @@ module Scribe
 
     # Returns the StructuringStage::Result so the caller can meter it.
     def process_form_output(output, transcript)
+      # An inline-fields output carries its own ad-hoc schema (no Page); fall
+      # back to the page's persisted form fields + prompt otherwise.
+      if output.inline_fields.present?
+        fields = Scribe::InlineField.build_all(output.inline_fields)
+        system_prompt = nil
+      else
+        fields = output.page.form_fields.to_a
+        system_prompt = output.page.prompt
+      end
+
       config = Llm::ConfigResolver.call(
         function: :structuring, page: output.page, account: session.account
       )
 
       stage = Scribe::StructuringStage.new(
         config: config,
-        fields: output.page.form_fields.to_a,
+        fields: fields,
         context: output.context,
-        system_prompt: output.page.prompt
+        system_prompt: system_prompt
       ).call(transcript.text)
 
       output.result = stage.structured

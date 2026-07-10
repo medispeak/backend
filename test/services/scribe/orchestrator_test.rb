@@ -201,6 +201,35 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     assert_equal 0, UsageEvent.where(scribe_session_id: session.id).count
   end
 
+  test "form output with inline_fields structures against the ad-hoc schema (no page)" do
+    stub_asr(text: "the patient has a fever")
+    stub_chat({ "hr" => 88, "diagnosis" => "fever" })
+
+    account = create(:account)
+    session = create(:scribe_session, account: account, language: "en")
+    attach_audio(session)
+
+    form_output = create(
+      :scribe_output, scribe_session: session, output_type: "form", page: nil,
+      inline_fields: [
+        { "key" => "hr", "label" => "Heart Rate", "type" => "number" },
+        { "key" => "diagnosis", "label" => "Diagnosis", "type" => "string" }
+      ]
+    )
+
+    assert_difference("UsageEvent.count", 2) do # one ASR + one structuring
+      Scribe::Orchestrator.new(session).call
+    end
+
+    form_output.reload
+    assert_nil form_output.page_id, "inline-fields output must not reference a page"
+    assert form_output.status_success?, "inline form output should succeed: #{form_output.result_errors.inspect}"
+    assert_equal 88, form_output.result["hr"]
+    assert_equal "fever", form_output.result["diagnosis"]
+
+    assert_equal "completed", session.reload.status
+  end
+
   test "note output runs free-text structuring and stores the note" do
     stub_asr(text: "patient presented with chest pain")
     stub_chat({ "note" => "Patient presented with chest pain. Plan: ECG." })

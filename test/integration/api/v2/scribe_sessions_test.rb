@@ -141,6 +141,56 @@ module Api
         assert_response :unauthorized
       end
 
+      test "create form output with inline fields returns 201 and stores them" do
+        post "/api/v2/scribe_sessions",
+             params: {
+               outputs: [
+                 { type: "form", fields: [ { key: "hr", label: "Heart Rate", type: "number" } ] }
+               ]
+             }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :created
+        session_id = JSON.parse(response.body)["id"]
+
+        output = ScribeSession.find(session_id).scribe_outputs.first
+        assert_nil output.page_id
+        assert_equal "hr", output.inline_fields.first["key"]
+        assert_equal "number", output.inline_fields.first["type"]
+      end
+
+      test "create form output with neither page_id nor fields returns 422" do
+        post "/api/v2/scribe_sessions",
+             params: { outputs: [ { type: "form" } ] }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+      end
+
+      test "create form output with both page_id and fields returns 422" do
+        post "/api/v2/scribe_sessions",
+             params: {
+               outputs: [
+                 { type: "form", page_id: @page.id,
+                   fields: [ { key: "hr", label: "Heart Rate", type: "number" } ] }
+               ]
+             }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+      end
+
+      test "create form output with invalid inline fields returns 422" do
+        post "/api/v2/scribe_sessions",
+             params: {
+               outputs: [
+                 { type: "form", fields: [ { key: "sx", type: "single_select" } ] }
+               ]
+             }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+      end
+
       test "create with invalid output type returns 422" do
         post "/api/v2/scribe_sessions",
              params: { outputs: [ { type: "bogus" } ] }.to_json,

@@ -214,7 +214,8 @@ module Api
             output_type: output[:type],
             page_id: output[:page_id],
             template_ref: output[:template_ref],
-            context: output[:context].presence || {}
+            context: output[:context].presence || {},
+            inline_fields: output[:fields].present? ? output[:fields].map { |f| f.to_h } : nil
           )
         end
       end
@@ -232,9 +233,21 @@ module Api
           end
 
           if type == "form"
+            # A form output carries EXACTLY one schema source: a persisted
+            # page_id OR an inline `fields` array. Neither/both is a 422.
             page_id = output[:page_id]
-            unless page_id.present? && Page.exists?(id: page_id)
-              return "page_id #{page_id.inspect} does not reference an existing page"
+            fields = output[:fields]
+            has_page = page_id.present?
+            has_fields = fields.present?
+            return "form output needs exactly one of page_id or fields" if has_page == has_fields
+
+            if has_page
+              unless Page.exists?(id: page_id)
+                return "page_id #{page_id.inspect} does not reference an existing page"
+              end
+            else
+              err = Scribe::InlineField.validation_error(fields.map { |f| f.to_h })
+              return err if err
             end
           end
         end
@@ -267,7 +280,10 @@ module Api
       def create_params
         params.permit(
           :language_hint, :mode, :callback_url,
-          outputs: [ :type, :page_id, :template_ref, { context: {} } ]
+          outputs: [
+            :type, :page_id, :template_ref, { context: {} },
+            { fields: [ :key, :label, :type, :description, :minimum, :maximum, { enum: [] } ] }
+          ]
         )
       end
     end
