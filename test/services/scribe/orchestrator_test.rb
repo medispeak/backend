@@ -179,6 +179,69 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     assert_equal %w[asr], functions
   end
 
+  test "orchestrator processes the transcript output before it structures the form (ordering pinned)" do
+    stub_asr(text: "the patient has a fever")
+
+    account = create(:account)
+    session = create(:scribe_session, account: account, language: "en")
+    attach_audio(session)
+    page = build_page_with_fields
+
+    # FE ordering: the form output is created BEFORE the transcript output. If
+    # Step 1's partition were reverted, the form would structure first and this
+    # test would fail (transcript still status_pending when the form runs).
+    form_output = create(:scribe_output, scribe_session: session, output_type: "form", page: page)
+    transcript_output = create(:scribe_output, scribe_session: session, output_type: "transcript")
+
+    # Stub StructuringStage.new -> a double whose #call records, at the moment the
+    # form structuring runs, whether the transcript output is ALREADY succeeded.
+    # This is the assertion that genuinely exercises Step 1's ordering change.
+    transcript_done_when_form_structured = nil
+    fake_stage = Object.new
+    fake_stage.define_singleton_method(:call) do |_transcript_text|
+      transcript_done_when_form_structured = transcript_output.reload.status_success?
+      # Match StructuringStage::Result's members (structuring_stage.rb:10-13);
+      # usage: nil is fine — meter_output's record_and_deduct is best-effort and
+      # rescues, so it cannot fail this test.
+      Scribe::StructuringStage::Result.new(
+        structured: { "diagnosis" => "fever" }, usage: nil, model: "test",
+        provider: "test", finish_reason: "stop", valid: true, errors: []
+      )
+    end
+    Scribe::StructuringStage.stubs(:new).returns(fake_stage)
+
+    Scribe::Orchestrator.new(session).call
+
+    assert_equal true, transcript_done_when_form_structured,
+      "transcript output must be status_success BEFORE the form's StructuringStage runs"
+  end
+
+  test "transcript output succeeds even when a sibling form output fails" do
+    stub_asr(text: "the patient has a fever")
+    stub_chat({ "diagnosis" => "fever" }, finish: "length") # truncation -> form fails
+
+    account = create(:account)
+    session = create(:scribe_session, account: account, language: "en")
+    attach_audio(session)
+    page = build_page_with_fields
+
+    # Create the form output BEFORE the transcript output to reproduce the FE's
+    # ordering; the orchestrator must still finish the transcript first/regardless.
+    form_output = create(:scribe_output, scribe_session: session, output_type: "form", page: page)
+    transcript_output = create(:scribe_output, scribe_session: session, output_type: "transcript")
+
+    Scribe::Orchestrator.new(session).call
+
+    transcript_output.reload
+    assert transcript_output.status_success?
+    assert_equal "the patient has a fever", transcript_output.result["text"]
+
+    form_output.reload
+    assert form_output.status_failure?
+
+    assert_equal "partial", session.reload.status
+  end
+
   test "ASR failure marks the session and all outputs failed" do
     stub_request(:post, ASR_URL).to_return(status: 500, body: "boom")
 

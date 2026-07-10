@@ -36,7 +36,18 @@ module Scribe
       transcript = ensure_transcript!
       return @session if transcript.nil? && asr_failed?
 
-      @session.scribe_outputs.each do |output|
+      # Transcript outputs are a pure echo of the already-persisted transcript
+      # (no LLM call), so process them FIRST — the transcript reaches :success in
+      # the same instant it persists, before the slow structuring outputs run.
+      # Ordering is the only behavior that changes; per-output processing,
+      # isolation, and metering are unchanged. partition materializes the relation
+      # once and preserves each partition's relative order, so form/note outputs
+      # keep their prior order (and their stable dedupe_key) relative to one
+      # another — only transcripts jump ahead.
+      transcript_outputs, other_outputs =
+        @session.scribe_outputs.partition { |o| o.output_type == "transcript" }
+
+      (transcript_outputs + other_outputs).each do |output|
         # Idempotent re-commit: an already-successful output is not reprocessed
         # or re-metered, so retrying a failed/partial session only reruns the
         # outputs that still need it. ScribeOutput's status enum is PREFIXED.
