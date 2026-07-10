@@ -364,4 +364,22 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     refute form_output.status_failure?
     assert UsageEvent.where(scribe_session_id: session.id, function: "structuring").exists?
   end
+
+  # Regression: the ASR download must carry a real audio extension. A ".bin"
+  # tempfile makes OpenAI Whisper reject the request with "Invalid file format".
+  test "with_audio yields a tempfile with the uploaded file's audio extension" do
+    session = create(:scribe_session)
+    session.audio_files.attach(io: StringIO.new("fake-audio"), filename: "clip.mp3", content_type: "audio/mpeg")
+    ext = nil
+    Scribe::Orchestrator.new(session).send(:with_audio) { |io| ext = File.extname(io.path) }
+    assert_equal ".mp3", ext
+  end
+
+  test "with_audio derives the extension from content-type when the filename has none" do
+    session = create(:scribe_session)
+    session.audio_files.attach(io: StringIO.new("fake-audio"), filename: "consultation", content_type: "audio/webm")
+    ext = nil
+    Scribe::Orchestrator.new(session).send(:with_audio) { |io| ext = File.extname(io.path) }
+    assert_equal ".webm", ext
+  end
 end

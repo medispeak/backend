@@ -322,7 +322,7 @@ module Scribe
       blob = session.audio_files.first
       return yield(nil) if blob.nil?
 
-      tmp = Tempfile.new(["audio", ".bin"])
+      tmp = Tempfile.new(["audio", audio_extension(blob)])
       tmp.binmode
       tmp.write(blob.download)
       tmp.rewind
@@ -331,6 +331,23 @@ module Scribe
       ensure
         tmp.close!
       end
+    end
+
+    # Provider ASR endpoints (e.g. OpenAI Whisper) infer the audio format from
+    # the file's EXTENSION, so the downloaded tempfile must carry a real audio
+    # extension — never ".bin", which Whisper rejects with "Invalid file format".
+    # Prefer the uploaded filename's extension; fall back to the content-type.
+    CONTENT_TYPE_EXT = {
+      "audio/mpeg" => ".mp3", "audio/mp3" => ".mp3", "audio/mp4" => ".mp4",
+      "audio/wav" => ".wav", "audio/x-wav" => ".wav", "audio/webm" => ".webm",
+      "audio/ogg" => ".ogg", "audio/m4a" => ".m4a", "audio/aac" => ".aac"
+    }.freeze
+
+    def audio_extension(blob)
+      from_name = File.extname(blob.filename.to_s).downcase
+      return from_name if from_name.present?
+
+      CONTENT_TYPE_EXT[blob.content_type] || ".mp3"
     end
   end
 end
