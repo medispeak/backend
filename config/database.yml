@@ -19,8 +19,12 @@ default: &default
   # https://guides.rubyonrails.org/configuring.html#database-pooling
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
   host: <%= ENV['DB_HOST'] %>
+  port: <%= ENV.fetch("DB_PORT", 5432) %>
   username: <%= ENV['DB_USERNAME'] %>
   password: <%= ENV['DB_PASSWORD'] %>
+  # DO Managed Postgres (and most hosted PG) require TLS. Defaults to "prefer"
+  # so local/dev on a plaintext socket is unaffected; production sets "require".
+  sslmode: <%= ENV.fetch("DB_SSLMODE", "prefer") %>
 
 development:
   <<: *default
@@ -84,8 +88,9 @@ production:
   primary: &primary_production
     <<: *default
     database: medispeak_backend_production
-    username: medispeak_backend
-    password: <%= ENV["MEDISPEAK_BACKEND_DATABASE_PASSWORD"] %>
+    # Connection (host/port/user/password/sslmode) comes from the shared default
+    # via env — one managed-Postgres credential (e.g. DO's) serves all four
+    # databases below; each just overrides the database name.
   cache:
     <<: *primary_production
     database: medispeak_backend_production_cache
