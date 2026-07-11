@@ -13,6 +13,13 @@ Rails.application.routes.draw do
       resources :accounts
       resources :usage_events, only: [ :index, :show ]
 
+      # Scribe sessions + all associated data (read-only inspection).
+      resources :scribe_sessions, only: [ :index, :show ]
+      resources :scribe_outputs, only: [ :index, :show ]
+      resources :transcripts, only: [ :index, :show ]
+      resources :scribe_transcript_segments, only: [ :index, :show ]
+      resources :scribe_audio_chunks, only: [ :index, :show ]
+
       root to: "users#index"
     end
   devise_for :users

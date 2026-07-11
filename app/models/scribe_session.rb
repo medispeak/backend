@@ -24,6 +24,9 @@ class ScribeSession < ApplicationRecord
   has_many :audio_chunks, class_name: "ScribeAudioChunk", dependent: :destroy
   has_many :transcript_segments, class_name: "ScribeTranscriptSegment", dependent: :destroy
   has_one :transcript, dependent: :destroy
+  # Metering ledger for this session. Nullify (not destroy) so the immutable
+  # usage record survives even if the session is purged; used by the admin view.
+  has_many :usage_events, dependent: :nullify
 
   has_many_attached :audio_files
 
