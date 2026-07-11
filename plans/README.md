@@ -44,6 +44,7 @@ gate** — do not code past it without maintainer sign-off.
 | 024 | Live form-fill: structure the live transcript during recording (flag-gated) | P1 | M | 022 | SHIPPED (flag off) |
 | 025 | Latency-frontier audit: where stop→fill time goes + verified next wins | P2 | — | — | FINDINGS |
 | 026 | Realtime voice (OpenAI ephemeral tokens) + Sarvam Indic ASR/translate | P1 | L | — | SHIPPED |
+| 027 | Security + correctness audit of recently shipped code (findings + resolutions) | P1 | M | — | FIXED |
 
 Status values: TODO · IN PROGRESS · DONE · BLOCKED (one-line reason) · REJECTED (one-line rationale)
 
