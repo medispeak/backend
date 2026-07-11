@@ -41,6 +41,9 @@ gate** — do not code past it without maintainer sign-off.
 | 021 | Surface the transcript the instant ASR lands (decouple from form-fill) | P2 | S-M | — | DONE |
 | 022 | Incremental per-segment transcription through the provider seam | P2 | L | 020, 021 (soft) | DONE |
 | 023 | Run Solid Queue in a dedicated worker so jobs start promptly | P3 | S | — | DONE |
+| 024 | Live form-fill: structure the live transcript during recording (flag-gated) | P1 | M | 022 | SHIPPED (flag off) |
+| 025 | Latency-frontier audit: where stop→fill time goes + verified next wins | P2 | — | — | FINDINGS |
+| 026 | Realtime voice (OpenAI ephemeral tokens) + Sarvam Indic ASR/translate | P1 | L | — | SHIPPED |
 
 Status values: TODO · IN PROGRESS · DONE · BLOCKED (one-line reason) · REJECTED (one-line rationale)
 
