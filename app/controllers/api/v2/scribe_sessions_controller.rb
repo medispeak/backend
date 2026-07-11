@@ -311,7 +311,7 @@ module Api
       # GET /api/v2/scribe_sessions
       def index
         sessions = account_sessions
-                   .includes(:scribe_outputs, :transcript, :transcript_segments)
+                   .includes(:scribe_outputs, :transcript, :transcript_segments, :usage_events)
                    .order(created_at: :desc)
                    .limit(page_limit)
                    .offset(page_offset)

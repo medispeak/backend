@@ -19,13 +19,13 @@ class RateLimitTest < ActionDispatch::IntegrationTest
     headers = { "Authorization" => "Bearer #{api_token.raw_token}" }
 
     # First two requests are within the per-minute budget.
-    get "/api/v1/me", headers: headers
+    get "/api/v2/usage", headers: headers
     assert_response :success
-    get "/api/v1/me", headers: headers
+    get "/api/v2/usage", headers: headers
     assert_response :success
 
     # Third request exceeds rpm=2 and must be throttled.
-    get "/api/v1/me", headers: headers
+    get "/api/v2/usage", headers: headers
     assert_response :too_many_requests
 
     body = JSON.parse(response.body)
@@ -44,7 +44,7 @@ class RateLimitTest < ActionDispatch::IntegrationTest
     # No bearer token: request resolves to no account and is not throttled by
     # rack-attack (it is still rejected by the controller as unauthorized).
     10.times do
-      get "/api/v1/me"
+      get "/api/v2/usage"
       assert_response :unauthorized
     end
   end

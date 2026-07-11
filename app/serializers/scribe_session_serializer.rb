@@ -12,13 +12,30 @@ class ScribeSessionSerializer
       status: @session.status,
       mode: @session.mode,
       language: @session.language,
+      created_at: @session.created_at,
       expires_at: @session.expires_at,
       transcript: serialize_transcript,
-      outputs: @session.scribe_outputs.map { |output| serialize_output(output) }
+      outputs: @session.scribe_outputs.map { |output| serialize_output(output) },
+      usage: serialize_usage
     }
   end
 
   private
+
+  # Per-session metering so a client (the account's own user, via their account
+  # token) can see what this session cost — not just the internal admin. Summed
+  # in Ruby from the loaded usage_events association (preloaded on the index) so
+  # a session list stays free of an N+1.
+  def serialize_usage
+    events = @session.usage_events.to_a
+    {
+      cost: events.sum { |e| e.cost.to_f },
+      total_tokens: events.sum { |e| e.total_tokens.to_i },
+      audio_seconds: events.sum { |e| e.audio_seconds.to_f },
+      by_function: events.group_by(&:function)
+                         .transform_values { |es| es.sum { |e| e.cost.to_f } }
+    }
+  end
 
   # Top-level transcript, sourced from the session's has_one :transcript so
   # clients read it without depending on output ordering (plan 021). Additive:

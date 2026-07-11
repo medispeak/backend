@@ -1,31 +1,19 @@
-<div class="container mx-auto p-4">
-  <div class="my-8">
-    <div class="mx-auto max-w-7xl px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl lg:mx-0">
-        <h1 class="text-3xl font-bold tracking-tight text-gray-700 sm:text-4xl">MediSpeak</h1>
-        <p class="mt-3 text-base leading-7 text-gray-600">Your one-stop hub for managing real-time transcriptions.</p>
-      </div>
-      <div class="mx-auto mt-10 flex max-w-2xl flex-col gap-8 lg:mx-0 lg:mt-20 lg:max-w-none lg:flex-row lg:items-end">
-        <%= link_to demo_path, data: { turbo: false } do %>
-          <div class="hover:scale-110 ease-out duration-300 flex flex-col-reverse justify-between gap-x-16 gap-y-8 rounded-2xl bg-gray-900 p-8 sm:flex-row-reverse sm:items-end lg:w-full lg:max-w-sm lg:flex-auto lg:flex-col lg:items-start lg:gap-y-44">
-            <p class="flex-none text-7xl font-bold tracking-tight text-white">Try it!</p>
-            <div class="sm:w-80 sm:shrink lg:w-auto lg:flex-none">
-              <p class="text-lg font-semibold tracking-tight text-white">Ready to dive in?</p>
-              <p class="mt-2 text-base leading-7 text-gray-400">Explore the future of medical communication with MediSpeak! Our demo page gives healthcare professionals a hands-on experience to manage real-time transcriptions seamlessly. Don't miss the opportunity to simplify your patient conversations.
-              </p>
-            </div>
-          </div>
-        <% end %>
-        <%= link_to transcriptions_path do %>
-          <div class="hover:scale-110 ease-out duration-300 flex flex-col-reverse justify-between gap-x-16 gap-y-8 rounded-2xl bg-indigo-600 p-8 sm:w-11/12 sm:max-w-xl sm:flex-row-reverse sm:items-end lg:w-full lg:max-w-none lg:flex-auto lg:flex-col lg:items-start lg:gap-y-28">
-            <p class="flex-none text-7xl font-bold tracking-tight text-white"><%= @transcriptions_count %></p>
-            <div class="sm:w-80 sm:shrink lg:w-auto lg:flex-none">
-              <p class="text-lg font-semibold tracking-tight text-white">View Transcriptions this month</p>
-              <p class="mt-2 text-base leading-7 text-indigo-200">See the list of transcriptions that have been done this month</p>
-            </div>
-          </div>
-        <% end %>
-      </div>
+<div class="container mx-auto p-6">
+  <div class="mx-auto max-w-3xl">
+    <h1 class="text-3xl font-bold tracking-tight text-gray-800">MediSpeak</h1>
+    <p class="mt-3 text-base leading-7 text-gray-600">
+      Model-agnostic clinical scribe. Manage AI providers, models, form templates and
+      inspect scribe sessions and usage from the admin.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-4">
+      <%= link_to "Open Admin", admin_root_path,
+            class: "rounded-lg bg-gray-900 px-5 py-3 font-semibold text-white hover:bg-gray-700" %>
+      <%= link_to "Scribe Sessions", admin_scribe_sessions_path,
+            class: "rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-500" %>
+      <%= link_to "Usage", admin_usage_events_path,
+            class: "rounded-lg border border-gray-300 px-5 py-3 font-semibold text-gray-800 hover:bg-gray-50" %>
+      <%= link_to "API Tokens", api_tokens_path,
+            class: "rounded-lg border border-gray-300 px-5 py-3 font-semibold text-gray-800 hover:bg-gray-50" %>
     </div>
   </div>
 </div>

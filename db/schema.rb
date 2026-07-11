@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_11_030000) do
+ActiveRecord::Schema[8.0].define(version: 2026_07_11_040000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -275,23 +275,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_11_030000) do
     t.index ["account_id"], name: "index_templates_on_account_id"
   end
 
-  create_table "transcriptions", force: :cascade do |t|
-    t.bigint "user_id", null: false
-    t.bigint "page_id", null: false
-    t.jsonb "ai_response", default: {}, null: false
-    t.text "transcription_text"
-    t.string "status", default: "pending", null: false
-    t.integer "duration", default: 0
-    t.integer "prompt_tokens", default: 0
-    t.integer "completion_tokens", default: 0
-    t.integer "total_tokens", default: 0
-    t.jsonb "context", default: {}, null: false
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-    t.index ["page_id"], name: "index_transcriptions_on_page_id"
-    t.index ["user_id"], name: "index_transcriptions_on_user_id"
-  end
-
   create_table "transcripts", force: :cascade do |t|
     t.bigint "scribe_session_id", null: false
     t.text "text"
@@ -386,8 +369,6 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_11_030000) do
   add_foreign_key "scribe_sessions", "accounts"
   add_foreign_key "scribe_transcript_segments", "scribe_sessions"
   add_foreign_key "templates", "accounts"
-  add_foreign_key "transcriptions", "pages"
-  add_foreign_key "transcriptions", "users"
   add_foreign_key "transcripts", "scribe_sessions"
   add_foreign_key "users", "accounts"
   add_foreign_key "webapps", "users"

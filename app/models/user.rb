@@ -7,7 +7,6 @@ class User < ApplicationRecord
   belongs_to :account, optional: true
 
   has_many :api_tokens, dependent: :destroy
-  has_many :transcriptions, dependent: :destroy
   has_many :webapps, dependent: :destroy
 
   # Every user belongs to a billable account; create one on signup if absent.
