@@ -113,7 +113,7 @@ module Scribe
         Scribe::AsrStage.new(config: config).call(
           audio_io,
           language: session.language,
-          mode: :transcribe,
+          mode: config.asr_mode,
           audio_seconds: duration.seconds
         )
       end

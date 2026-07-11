@@ -64,6 +64,17 @@ class LlmFoundationTest < Minitest::Test
     refute cfg.capability?(:can_structure)
   end
 
+  def test_config_asr_mode
+    base = { provider_kind: :openai_compatible, api_model_id: "m", base_url: "http://x/" }
+    assert_equal :transcribe, Llm::Config.new(**base).asr_mode, "defaults to transcribe"
+    assert_equal :translate, Llm::Config.new(**base, options: { asr_mode: "translate" }).asr_mode
+    assert_equal :translate, Llm::Config.new(**base, options: { "asr_mode" => "translate" }).asr_mode,
+                 "string key resolves too (jsonb round-trips as strings)"
+    assert_equal :transcribe, Llm::Config.new(**base, options: { asr_mode: "transcribe" }).asr_mode
+    assert_equal :transcribe, Llm::Config.new(**base, options: { asr_mode: "bogus" }).asr_mode,
+                 "unknown value falls back to the safe default"
+  end
+
   def test_default_config_provider_structuring_from_env
     with_env("OPENAI_ACCESS_TOKEN" => "sk-abc", "OPENAI_ORGANIZATION_ID" => "org-1") do
       cfg = Llm::DefaultConfigProvider.call(function: :structuring)

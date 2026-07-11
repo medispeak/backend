@@ -40,5 +40,18 @@ module Llm
     def capability?(name)
       !!@capabilities[name.to_sym] || !!@capabilities[name.to_s]
     end
+
+    # ASR task mode, derived from the resolved assignment options:
+    #   :transcribe (default) — keep the spoken language (incl. code-mix).
+    #   :translate            — Whisper translates the audio to English.
+    # Set options["asr_mode"] = "translate" on the ASR ModelAssignment (at any
+    # scope: Page > Template > Account > System) for a client whose form fills
+    # must be English — e.g. Malayalam/English code-mix consults feeding an
+    # English EHR. Only Whisper-family models (OpenAI whisper-1, self-hosted
+    # Whisper) support :translate, and it always targets English. Any absent or
+    # unknown value falls back to the safe :transcribe default.
+    def asr_mode
+      (@options[:asr_mode] || @options["asr_mode"]).to_s == "translate" ? :translate : :transcribe
+    end
   end
 end

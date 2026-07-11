@@ -89,6 +89,35 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     assert_equal %w[asr structuring], functions
   end
 
+  test "asr_mode :translate (from the ASR assignment options) routes ASR to the /audio/translations endpoint" do
+    translations_url = "https://api.openai.com/v1/audio/translations"
+    stub_request(:post, translations_url).to_return(
+      status: 200,
+      headers: { "Content-Type" => "application/json" },
+      body: { text: "the patient has a fever" }.to_json
+    )
+
+    # ASR assigned to whisper-1 on OpenAI with the translate task toggled on via
+    # options — the per-client seam a Malayalam/code-mix deployment would use.
+    provider = create(:ai_provider, kind: "openai_compatible", name: "OpenAI",
+                                     base_url: "https://api.openai.com", api_key: "sk-test")
+    whisper = create(:ai_model, ai_provider: provider, api_model_id: "whisper-1",
+                                capabilities: { "can_transcribe" => true })
+    create(:model_assignment, scope_type: "System", function: "asr",
+                              ai_model: whisper, options: { "asr_mode" => "translate" })
+
+    session = create(:scribe_session, account: create(:account), language: "ml")
+    attach_audio(session)
+    create(:scribe_output, scribe_session: session, output_type: "transcript")
+
+    Scribe::Orchestrator.new(session).call
+
+    assert_requested :post, translations_url, times: 1
+    assert_not_requested :post, ASR_URL
+    assert_equal "the patient has a fever", session.reload.transcript.text,
+                 "the English translation is stored as the transcript"
+  end
+
   test "ASR usage_event is metered at the real audio duration and a non-zero cost" do
     stub_asr(text: "the patient has a fever")
     stub_chat({ "diagnosis" => "fever", "temperature" => 39 })

@@ -34,7 +34,7 @@ class TranscribeSegmentJob < ApplicationJob
       Scribe::AsrStage.new(config: config).call(
         io,
         language: session.language,
-        mode: :transcribe,
+        mode: config.asr_mode,
         audio_seconds: duration
       )
     end

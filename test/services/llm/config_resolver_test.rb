@@ -64,7 +64,8 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
                                 capabilities: { "can_transcribe" => true })
     fallback = create(:ai_model, api_model_id: "fb")
     create(:model_assignment, scope_type: "System", function: "asr", ai_model: primary,
-                              fallback_ai_model: fallback, options: { "language" => "hi" })
+                              fallback_ai_model: fallback,
+                              options: { "language" => "hi", "asr_mode" => "translate" })
 
     cfg = Llm::ConfigResolver.call(function: :asr)
 
@@ -73,6 +74,7 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
     assert_equal "http://host:8000/", cfg.base_url
     assert cfg.capability?(:can_transcribe)
     assert_equal "hi", cfg.options[:language]
+    assert_equal :translate, cfg.asr_mode, "asr_mode resolves from the assignment options"
     assert_equal "sk-xyz", cfg.api_key, "api_key should decrypt via the lazy resolver"
     assert_equal "fb", cfg.fallback.api_model_id
   end
