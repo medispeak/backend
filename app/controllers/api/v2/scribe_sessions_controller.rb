@@ -180,6 +180,36 @@ module Api
         render json: { structured_data: structured }, status: :ok
       end
 
+      # POST /api/v2/scribe_sessions/:id/realtime_token
+      #
+      # Mints a short-lived ephemeral token the BROWSER uses to connect directly
+      # to the realtime provider (OpenAI) for live transcription — the account
+      # key never reaches the client. Realtime is a live overlay; the
+      # authoritative transcript still comes from the commit pipeline. Gated
+      # behind SCRIBE_REALTIME: when OFF the surface does not exist (404).
+      def realtime_token
+        unless Scribe::Realtime.enabled?
+          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
+          return
+        end
+
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+
+        result = Scribe::RealtimeToken.call(session)
+        render json: {
+          provider: result.provider,
+          token: result.token,
+          expires_at: result.expires_at,
+          url: result.url,
+          model: result.model,
+          session: result.session
+        }, status: :created
+      rescue Llm::Error => e
+        render_error(code: "realtime_unavailable", message: e.message, status: :unprocessable_entity)
+      end
+
       # POST /api/v2/scribe_sessions/:id/audio/segments
       #
       # Accepts one STANDALONE, independently-decodable transcription segment: a

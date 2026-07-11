@@ -12,7 +12,8 @@ module Llm
 
     DEFAULT_MODELS = {
       asr: "whisper-1",
-      structuring: "gpt-4o-mini"
+      structuring: "gpt-4o-mini",
+      realtime: "gpt-4o-transcribe"
     }.freeze
 
     def self.call(function:, fallback: nil)
@@ -45,6 +46,8 @@ module Llm
         { accepts_audio: true, can_transcribe: true }
       when :structuring
         { can_structure: true, supports_json_schema: true, supports_function_calling: true }
+      when :realtime
+        { accepts_audio: true, can_transcribe: true, realtime: true }
       else
         {}
       end

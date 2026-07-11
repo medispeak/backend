@@ -61,6 +61,7 @@ Rails.application.routes.draw do
           post "audio/segments", to: "scribe_sessions#audio_segments"
           get "audio/status", to: "scribe_sessions#audio_status"
           get "live_form", to: "scribe_sessions#live_form"
+          post "realtime_token", to: "scribe_sessions#realtime_token"
         end
       end
 

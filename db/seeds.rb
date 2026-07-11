@@ -377,6 +377,12 @@ ModelAssignment.find_or_create_by!(scope_type: "System", scope_id: nil, function
   a.ai_model = gpt_4_1_mini_model
 end
 
+# Realtime voice (browser streams directly to OpenAI via a backend-minted
+# ephemeral token). gpt-4o-transcribe is OpenAI's streaming transcription model.
+ModelAssignment.find_or_create_by!(scope_type: "System", scope_id: nil, function: "realtime") do |a|
+  a.ai_model = gpt_4o_transcribe_model
+end
+
 # Demonstration Page-scoped assignment showing mix-and-match across providers:
 # the "Consultation Form" page uses open-source Llama 3.3 70B (via OpenRouter)
 # for structuring, while ASR still resolves to OpenAI Whisper from the System
