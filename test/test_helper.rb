@@ -6,6 +6,12 @@ require "webmock/minitest"
 # All external provider HTTP must be stubbed in tests.
 WebMock.disable_net_connect!(allow_localhost: true)
 
+# Ensure routes are drawn (without force-reloading) so Devise mappings are
+# populated before any admin integration test signs in. Route drawing is
+# otherwise lazy in the test env, which made admin `sign_in` fail intermittently
+# depending on test order.
+Rails.application.routes_reloader.execute_unless_loaded
+
 module ActiveSupport
   class TestCase
     # Single process: forked parallel workers crash on macOS (Objective-C

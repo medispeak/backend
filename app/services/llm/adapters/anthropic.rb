@@ -34,7 +34,7 @@ module Llm
         Llm::Result.new(
           structured: structured,
           model: config.api_model_id,
-          provider: config.provider_kind.to_s,
+          provider: config.provider_name || config.provider_kind.to_s,
           usage: usage_from(resp["usage"]),
           finish_reason: resp["stop_reason"],
           latency_ms: elapsed_ms(started),

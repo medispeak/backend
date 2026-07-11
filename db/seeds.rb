@@ -387,6 +387,14 @@ ModelPrice.find_or_create_by!(provider: "OpenAI", model: "gpt-4o-transcribe") do
   mp.effective_at = Time.current
 end
 
+# gpt-4.1-mini token pricing (the current structuring model).
+ModelPrice.find_or_create_by!(provider: "OpenAI", model: "gpt-4.1-mini") do |mp|
+  mp.input_per_million = 0.40
+  mp.output_per_million = 1.60
+  mp.currency = "USD"
+  mp.effective_at = Time.current
+end
+
 ModelPrice.find_or_create_by!(provider: "OpenRouter", model: "meta-llama/llama-3.3-70b-instruct") do |mp|
   mp.input_per_million = 0.13
   mp.output_per_million = 0.40

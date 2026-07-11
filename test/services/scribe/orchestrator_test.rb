@@ -105,9 +105,9 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
       Scribe::AudioDuration::Result.new(seconds: 90.0, estimated: false)
     )
 
-    # The default ASR config records provider "openai_compatible" / model
-    # "whisper-1" (NOT the factory's default "openai"), so create a matching row.
-    create(:audio_model_price, provider: "openai_compatible", model: "whisper-1", price_per_minute: 0.006)
+    # The default ASR config records provider NAME "OpenAI" / model "whisper-1"
+    # (the price book keys on the provider name, not the :openai_compatible kind).
+    create(:audio_model_price, provider: "OpenAI", model: "whisper-1", price_per_minute: 0.006)
 
     Scribe::Orchestrator.new(session).call
 

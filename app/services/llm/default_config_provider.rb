@@ -27,6 +27,7 @@ module Llm
     def call
       Llm::Config.new(
         provider_kind: :openai_compatible,
+        provider_name: "OpenAI",
         api_model_id: DEFAULT_MODELS.fetch(@function),
         base_url: OPENAI_BASE,
         organization_id: ENV["OPENAI_ORGANIZATION_ID"],

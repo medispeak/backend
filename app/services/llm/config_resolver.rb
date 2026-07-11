@@ -49,6 +49,7 @@ module Llm
       provider = model.ai_provider
       Llm::Config.new(
         provider_kind: provider.kind,
+        provider_name: provider.name,
         api_model_id: model.api_model_id,
         base_url: provider.base_url,
         organization_id: provider.organization_id,
