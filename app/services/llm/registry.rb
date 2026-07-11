@@ -5,7 +5,8 @@ module Llm
   module Registry
     ADAPTERS = {
       openai_compatible: "Llm::Adapters::OpenaiCompatible",
-      anthropic: "Llm::Adapters::Anthropic"
+      anthropic: "Llm::Adapters::Anthropic",
+      sarvam: "Llm::Adapters::Sarvam"
     }.freeze
 
     def self.adapter_for(config)

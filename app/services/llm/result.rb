@@ -10,6 +10,10 @@ module Llm
     :usage,
     :latency_ms,
     :finish_reason,
+    # Language the provider actually detected/produced (e.g. Sarvam returns
+    # language_code; "en" after a translate). nil when the provider doesn't
+    # report one — the ASR stage then falls back to the caller's language hint.
+    :language,
     :raw,
     keyword_init: true
   )

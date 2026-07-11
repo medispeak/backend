@@ -24,7 +24,10 @@ module Scribe
 
       Result.new(
         text: llm.text,
-        language: language,
+        # Prefer the language the provider actually detected (Sarvam reports it,
+        # and it becomes "en" after a translate); fall back to the caller's hint
+        # for providers that don't return one (e.g. Whisper via ruby-openai).
+        language: llm.language || language,
         duration_seconds: audio_seconds,
         model: llm.model,
         provider: llm.provider,

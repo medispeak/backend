@@ -1,5 +1,5 @@
 class AiProvider < ApplicationRecord
-  KINDS = %w[openai_compatible anthropic gemini].freeze
+  KINDS = %w[openai_compatible anthropic gemini sarvam].freeze
 
   # API key encrypted at rest (Active Record Encryption).
   encrypts :api_key

@@ -295,6 +295,15 @@ self_hosted_provider = AiProvider.find_or_create_by!(name: "Self-hosted Whisper"
   p.api_key = "not-needed"
 end
 
+# Sarvam AI: Indic-language ASR that beats Whisper on Malayalam / Hindi / code-mix
+# and can transcribe OR translate-to-English in one call (saaras:v3 `mode`). Uses
+# the dedicated Sarvam adapter (its API is not OpenAI-compatible). Key from ENV.
+sarvam_provider = AiProvider.find_or_create_by!(name: "Sarvam") do |p|
+  p.kind = "sarvam"
+  p.base_url = "https://api.sarvam.ai"
+  p.api_key = ENV["SARVAM_API_KEY"] if ENV["SARVAM_API_KEY"].present?
+end
+
 # Models (natural key: api_model_id + ai_provider)
 whisper_model = AiModel.find_or_create_by!(ai_provider: openai_provider, api_model_id: "whisper-1") do |m|
   m.display_name = "Whisper v2 (OpenAI)"
@@ -346,6 +355,15 @@ end
 
 faster_whisper_model = AiModel.find_or_create_by!(ai_provider: self_hosted_provider, api_model_id: "Systran/faster-whisper-large-v3") do |m|
   m.display_name = "faster-whisper large-v3 (self-hosted)"
+  m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
+end
+
+# Sarvam saaras:v3 — one model, many modes (transcribe/translate/codemix) chosen
+# via the ASR mode + options[:sarvam_mode]. REST caps at ~30s/file, so it fits
+# the incremental 3s-segment path; pair it with a Whisper fallback for long
+# whole-file audio (Caller falls back on the >30s error).
+sarvam_saaras_model = AiModel.find_or_create_by!(ai_provider: sarvam_provider, api_model_id: "saaras:v3") do |m|
+  m.display_name = "Sarvam Saaras v3 (Indic ASR + translate)"
   m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
 end
 
@@ -410,6 +428,13 @@ AudioModelPrice.find_or_create_by!(provider: "OpenAI", model: "whisper-1") do |a
 end
 
 AudioModelPrice.find_or_create_by!(provider: "OpenAI", model: "gpt-4o-transcribe") do |amp|
+  amp.price_per_minute = 0.006
+  amp.currency = "USD"
+  amp.effective_at = Time.current
+end
+
+# Sarvam Saaras per-minute price (ESTIMATE — confirm against sarvam.ai/pricing).
+AudioModelPrice.find_or_create_by!(provider: "Sarvam", model: "saaras:v3") do |amp|
   amp.price_per_minute = 0.006
   amp.currency = "USD"
   amp.effective_at = Time.current
