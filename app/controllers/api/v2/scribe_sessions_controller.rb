@@ -360,25 +360,34 @@ module Api
             next
           end
 
-          # Meter against the session's own account. For a scoped session token
-          # current_account is nil, so sourcing it from the session keeps the
-          # quota hold correct without widening the token's reach.
-          token = Metering::QuotaGuard.hold!(account: session.account, estimate: commit_estimate(session))
-          unless token.ok?
-            # We already won the claim (status is processing), so roll it back to
-            # the original committable status — otherwise a broke account is stuck
-            # in processing forever with no job enqueued. update_all bypasses
-            # dirty-tracking so the revert always writes.
-            ScribeSession.where(id: session.id).update_all(status: original_status, updated_at: Time.current)
-            render_error(
-              code: "insufficient_credit",
-              message: "Account has insufficient credit to process this session",
-              status: :payment_required
-            )
-            next
+          # From here we hold the claim (status is processing, unclaimable by any
+          # other commit). ANYTHING that fails now — the quota hold raising on a
+          # lock-wait timeout/deadlock under concurrent commits, or the enqueue
+          # failing — must roll the claim back, or the session is wedged in
+          # processing and every future commit 409s forever. Revert then re-raise
+          # (the global handler renders a sanitized 500; the session is
+          # re-committable).
+          begin
+            # Meter against the session's own account. For a scoped session token
+            # current_account is nil, so sourcing it from the session keeps the
+            # quota hold correct without widening the token's reach.
+            token = Metering::QuotaGuard.hold!(account: session.account, estimate: commit_estimate(session))
+            unless token.ok?
+              revert_commit_claim(session, original_status)
+              render_error(
+                code: "insufficient_credit",
+                message: "Account has insufficient credit to process this session",
+                status: :payment_required
+              )
+              next
+            end
+
+            ProcessScribeSessionJob.perform_later(session.id)
+          rescue StandardError
+            revert_commit_claim(session, original_status)
+            raise
           end
 
-          ProcessScribeSessionJob.perform_later(session.id)
           render json: serialize(session.reload), status: :accepted
         end
       end
@@ -426,6 +435,13 @@ module Api
       COMMIT_ESTIMATE_MIN_MINUTES = 1.0
 
       private
+
+      # Undo a won commit claim (processing -> its prior committable status).
+      # update_all bypasses dirty-tracking so the revert always writes, even when
+      # the in-memory record still reads the original status.
+      def revert_commit_claim(session, original_status)
+        ScribeSession.where(id: session.id).update_all(status: original_status, updated_at: Time.current)
+      end
 
       # A conservative, non-zero credit estimate for the commit hold, sized from
       # the real audio duration (plan 001's Scribe::AudioDuration). Final cost is

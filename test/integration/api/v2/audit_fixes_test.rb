@@ -81,6 +81,22 @@ module Api
         assert_response :conflict
       end
 
+      test "a post-claim failure reverts the session instead of wedging it in processing" do
+        session = create(:scribe_session, account: @account, api_token: @token, user: @user, status: "uploading")
+        session.audio_files.attach(io: StringIO.new("a"), filename: "a.mp3", content_type: "audio/mpeg")
+        tok, = Scribe::SessionToken.mint(session)
+
+        # Simulate hold! raising after the claim wins (e.g. a lock-wait timeout
+        # under concurrent commits). The session must NOT be left in processing,
+        # or every later commit would 409 forever.
+        Metering::QuotaGuard.stubs(:hold!).raises(ActiveRecord::LockWaitTimeout.new("deadlock"))
+
+        post "/api/v2/scribe_sessions/#{session.id}/commit", headers: { "Authorization" => "Bearer #{tok}" }
+        assert_response :internal_server_error
+        assert_equal "uploading", session.reload.status,
+                     "the claim must roll back so the session stays committable"
+      end
+
       # ---- Realtime credit gate (findings 5/16) ----------------------------
 
       test "realtime_token is 402 for a broke account and mints nothing" do
