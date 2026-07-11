@@ -60,6 +60,7 @@ Rails.application.routes.draw do
           post "audio/chunks", to: "scribe_sessions#audio_chunks"
           post "audio/segments", to: "scribe_sessions#audio_segments"
           get "audio/status", to: "scribe_sessions#audio_status"
+          get "live_form", to: "scribe_sessions#live_form"
         end
       end
 

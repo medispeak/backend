@@ -8,5 +8,13 @@ module Scribe
     def self.enabled?
       ActiveModel::Type::Boolean.new.cast(ENV["SCRIBE_INCREMENTAL_ASR"])
     end
+
+    # Live form-fill: structure the growing transcript DURING recording so the
+    # form is pre-filled by the time the clinician stops. OFF by default — it
+    # runs extra (cheap, metered) structuring calls while recording. Flip with
+    # ENV["SCRIBE_LIVE_FORM"] = "true". Requires the incremental path.
+    def self.live_form_enabled?
+      enabled? && ActiveModel::Type::Boolean.new.cast(ENV["SCRIBE_LIVE_FORM"])
+    end
   end
 end

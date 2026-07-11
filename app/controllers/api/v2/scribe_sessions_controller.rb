@@ -155,6 +155,31 @@ module Api
         }, status: :ok
       end
 
+      # GET /api/v2/scribe_sessions/:id/live_form
+      #
+      # Structures the growing LIVE transcript for this session's form outputs so
+      # a client can pre-fill the form DURING recording, before commit. Returns
+      # { structured_data: { key => value } } merged across every form output.
+      #
+      # Gated behind the live-form flag: when OFF this returns an empty object
+      # (200) rather than 404, so a polling client degrades to "no pre-fill"
+      # instead of erroring. The authoritative, metered fill still happens once
+      # at commit (Scribe::Orchestrator); these interim passes are not persisted.
+      def live_form
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+
+        structured =
+          if Scribe::Incremental.live_form_enabled?
+            Scribe::LiveStructurer.new(session).call(session.live_transcript)
+          else
+            {}
+          end
+
+        render json: { structured_data: structured }, status: :ok
+      end
+
       # POST /api/v2/scribe_sessions/:id/audio/segments
       #
       # Accepts one STANDALONE, independently-decodable transcription segment: a
