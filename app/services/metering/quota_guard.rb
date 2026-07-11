@@ -22,6 +22,18 @@ module Metering
     class InsufficientCredit < StandardError; end
 
     class << self
+      # Read-only affordability check (no reservation, no lock). Accounts with no
+      # AccountCredit row are unlimited (true). Used to GATE cost channels that
+      # aren't settled through the normal hold!/deduct! flow — realtime token
+      # minting and live-form structuring stream/run on the operator's provider
+      # key, so a broke account must not be able to open them.
+      def affordable?(account:, estimate: 0)
+        credit = AccountCredit.find_by(account_id: account.id)
+        return true if credit.nil?
+
+        credit.balance - estimate.to_d >= 0
+      end
+
       def hold!(account:, estimate:)
         credit = AccountCredit.find_by(account_id: account.id)
         return Token.new(ok: true, transaction: nil, unlimited: true) if credit.nil?

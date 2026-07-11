@@ -11,7 +11,9 @@ module Scribe
 
     # Live form-fill: structure the growing transcript DURING recording so the
     # form is pre-filled by the time the clinician stops. OFF by default — it
-    # runs extra (cheap, metered) structuring calls while recording. Flip with
+    # runs extra structuring calls while recording. These interim passes are
+    # NOT persisted or metered (the operator absorbs the small provider cost);
+    # the authoritative, metered fill still happens once at commit. Flip with
     # ENV["SCRIBE_LIVE_FORM"] = "true". Requires the incremental path.
     def self.live_form_enabled?
       enabled? && ActiveModel::Type::Boolean.new.cast(ENV["SCRIBE_LIVE_FORM"])

@@ -104,7 +104,7 @@ module Api
         assert_requested :post, %r{/v1/audio/transcriptions}, times: 2
       end
 
-      test "a failed segment falls back to a whole-file ASR pass without double-charging :asr" do
+      test "an all-failed-segment session falls back to a whole-file ASR pass, billed exactly once" do
         # ASR sequence: segment arrival fails, the commit-time inline retry fails,
         # and only the whole-file fallback succeeds — so the segment stays failed
         # and the completeness fallback is exercised.
@@ -126,8 +126,7 @@ module Api
         post audio_url, params: { audio: single_shot_upload("full-storage-audio") }, headers: @auth
         assert_response :ok
 
-        asr_before = asr_usage_event_count
-        assert_equal 0, asr_before, "a failed segment must not be metered"
+        assert_equal 0, asr_usage_event_count, "a failed segment must not be metered"
 
         post commit_url, headers: @auth
         assert_response :accepted
@@ -138,8 +137,13 @@ module Api
         assert_equal "whole file transcript", @session.transcript.text,
                      "the whole-file fallback must yield a complete transcript"
 
-        assert_equal asr_before, asr_usage_event_count,
-                     "the whole-file fallback must NOT record a second :asr usage_event"
+        # No segment succeeded (nothing was metered), so the whole-file fallback
+        # is the SOLE transcription and IS billed — exactly once. (Previously it
+        # was skipped, giving the account a free transcript. When SOME segments
+        # are done+metered, the fallback is NOT metered — covered in
+        # orchestrator_segments_test — so this never double-charges.)
+        assert_equal 1, asr_usage_event_count,
+                     "the sole (whole-file) transcription must be metered exactly once"
       end
 
       test "with the incremental flag OFF the segments endpoint 404s and commit uses the whole-file ASR path" do

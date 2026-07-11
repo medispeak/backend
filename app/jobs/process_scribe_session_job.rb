@@ -23,12 +23,26 @@ class ProcessScribeSessionJob < ApplicationJob
 
     Scribe::Orchestrator.new(session).call
 
-    if session.callback_url.present?
-      ScribeWebhookJob.perform_later(session.id)
-    end
+    # Webhook delivery is best-effort and OUTSIDE the failure path below: an
+    # enqueue error must not demote a session the orchestrator already finalized.
+    enqueue_webhook(session)
   rescue StandardError => e
-    session&.update(status: :failed, error: { message: e.message })
+    # Only mark :failed when the pipeline did NOT already reach a terminal
+    # status. The Orchestrator sets completed/partial/failed itself; a late error
+    # (e.g. a metering/webhook hiccup after outputs persisted) must not demote an
+    # already-successful session to :failed and hide a delivered result.
+    if session && !session.reload.completed? && !session.partial?
+      session.update(status: :failed, error: { message: e.message })
+    end
     Rails.logger.error("ProcessScribeSessionJob failed for session=#{scribe_session_id}: #{e.class}: #{e.message}")
     nil
+  end
+
+  private
+
+  def enqueue_webhook(session)
+    ScribeWebhookJob.perform_later(session.id) if session.callback_url.present?
+  rescue StandardError => e
+    Rails.logger.error("ScribeWebhookJob enqueue failed for session=#{session.id}: #{e.class}: #{e.message}")
   end
 end

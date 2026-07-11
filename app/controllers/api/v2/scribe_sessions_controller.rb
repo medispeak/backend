@@ -10,6 +10,10 @@ module Api
       # session MAX_AUDIO_BYTES: a browser streams many small parts, and a single
       # oversized part is a client bug, not a legitimate upload.
       MAX_CHUNK_BYTES = 8.megabytes
+      # Minimum credit an account must hold to open a realtime session (a rough
+      # floor for a ~10-min operator-billed OpenAI realtime session; realtime is
+      # not per-session metered). Accounts with no AccountCredit row are unlimited.
+      REALTIME_MIN_CREDIT = 0.10
 
       # Account-wide surfaces stay account-token only; a scoped session token can
       # never mint tokens, create sessions, or list the account's sessions.
@@ -51,6 +55,19 @@ module Api
         return unless session
         return if reject_expired(session)
 
+        # Only accept audio while the session is still open for upload. Without
+        # this, a POST /audio after commit resets status to "uploading" (below),
+        # reopening the commit gate mid-pipeline and un-terminating a completed
+        # session. Mirrors the chunk/segment upload states.
+        unless session.created? || session.uploading?
+          render_error(
+            code: "validation_error",
+            message: "audio cannot be uploaded from status #{session.status}",
+            status: :conflict
+          )
+          return
+        end
+
         upload = params[:audio]
         if upload.blank?
           render_error(code: "validation_error", message: "audio file is required", status: :unprocessable_entity)
@@ -65,10 +82,16 @@ module Api
           )
           return
         end
-        if upload.size > ScribeSession::MAX_AUDIO_BYTES
+        # Cap the running total across ALL attachments, not just this part:
+        # repeated single-shot POSTs otherwise accumulate past the 25MB ceiling
+        # (the chunk path already enforces a running total). Single-shot is
+        # one-file, so existing bytes are normally 0 — this bounds a misbehaving
+        # client that re-POSTs.
+        existing_bytes = session.audio_files.sum { |f| f.blob&.byte_size.to_i }
+        if existing_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
           render_error(
             code: "audio_upload_failed",
-            message: "audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes",
+            message: "total audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes",
             status: :unprocessable_entity
           )
           return
@@ -81,7 +104,7 @@ module Api
           filename: upload.original_filename,
           content_type: content_type
         )
-        session.update!(status: "uploading")
+        session.update!(status: "uploading") if session.created?
 
         render json: { id: session.id, status: session.status }, status: :ok
       end
@@ -164,14 +187,16 @@ module Api
       # Gated behind the live-form flag: when OFF this returns an empty object
       # (200) rather than 404, so a polling client degrades to "no pre-fill"
       # instead of erroring. The authoritative, metered fill still happens once
-      # at commit (Scribe::Orchestrator); these interim passes are not persisted.
+      # at commit (Scribe::Orchestrator); these interim passes are NOT persisted
+      # or metered, so a broke account is credit-gated here to bound the extra
+      # (operator-billed) LLM cost a poller could run up.
       def live_form
         session = find_session
         return unless session
         return if reject_expired(session)
 
         structured =
-          if Scribe::Incremental.live_form_enabled?
+          if Scribe::Incremental.live_form_enabled? && Metering::QuotaGuard.affordable?(account: session.account)
             Scribe::LiveStructurer.new(session).call(session.live_transcript)
           else
             {}
@@ -196,6 +221,19 @@ module Api
         session = find_session
         return unless session
         return if reject_expired(session)
+
+        # Each mint opens a ~10-min OpenAI realtime session billed to the
+        # operator's key with no per-session metering (the browser streams
+        # directly). Hard-block accounts with no credit so a session token can't
+        # turn realtime minting into an unbounded cost channel.
+        unless Metering::QuotaGuard.affordable?(account: session.account, estimate: REALTIME_MIN_CREDIT)
+          render_error(
+            code: "insufficient_credit",
+            message: "Account has insufficient credit for realtime transcription",
+            status: :payment_required
+          )
+          return
+        end
 
         result = Scribe::RealtimeToken.call(session)
         render json: {
@@ -283,27 +321,12 @@ module Api
         return unless session
         return if reject_expired(session)
 
-        # Idempotency guard: only commit from a committable status. created and
-        # uploading are first commits; failed and partial re-commit to retry the
-        # not-yet-successful outputs (Orchestrator skips already-successful ones).
-        # processing (in flight) and completed (done) are rejected so a duplicate
-        # POST never re-runs the pipeline and double-charges. ScribeSession's
-        # status enum is UNPREFIXED, so the predicates are bare (session.created?).
-        unless session.created? || session.uploading? || session.failed? || session.partial?
-          render_error(
-            code: "validation_error",
-            message: "Session cannot be committed from status #{session.status}",
-            status: :conflict
-          )
-          return
-        end
-
         # A committable session must have SOME audio: either a single-shot blob or at
         # least one uploaded chunk. Chunk reassembly is deferred to the processing job
         # (Scribe::AudioSource) so the audio content is read exactly once on the way to
         # ASR — the job assembles and transcribes from a single tempfile rather than
         # assembling here and re-downloading the blob for ASR. This guard sits BEFORE the
-        # quota hold and OUTSIDE with_idempotency so a no-audio commit is a plain,
+        # atomic claim and OUTSIDE with_idempotency so a no-audio commit is a plain,
         # retryable 422 and never a cached response.
         if session.audio_files.blank? && !session.audio_chunks.exists?
           render_error(
@@ -316,15 +339,37 @@ module Api
 
         fingerprint = "commit:#{session.id}"
         with_idempotency(fingerprint) do
-          # Meter against the session's own account. For an account-token request
-          # this is current_account (the session is account-scoped); for a scoped
-          # session token current_account is nil, so sourcing it from the session
-          # keeps the quota hold correct without widening the token's reach.
+          # ATOMICALLY claim the commit. A check-then-act status guard let two
+          # racing commits (a session token carries no Idempotency-Key, so
+          # with_idempotency is a no-op there) both pass and both enqueue the
+          # pipeline — double processing + duplicate Transcript rows. A single
+          # conditional UPDATE lets exactly ONE request transition a committable
+          # session to processing; the losers see zero rows and 409. created and
+          # uploading are first commits; failed and partial re-commit to retry
+          # the not-yet-successful outputs (Orchestrator skips successful ones).
+          original_status = session.status
+          claimed = ScribeSession
+                    .where(id: session.id, status: %w[created uploading failed partial])
+                    .update_all(status: "processing", updated_at: Time.current)
+          if claimed.zero?
+            render_error(
+              code: "validation_error",
+              message: "Session cannot be committed from status #{session.reload.status}",
+              status: :conflict
+            )
+            next
+          end
+
+          # Meter against the session's own account. For a scoped session token
+          # current_account is nil, so sourcing it from the session keeps the
+          # quota hold correct without widening the token's reach.
           token = Metering::QuotaGuard.hold!(account: session.account, estimate: commit_estimate(session))
           unless token.ok?
-            # insufficient_credit is a stable, public v2 error code (402 Payment
-            # Required). Accounts with no AccountCredit row are unlimited, so
-            # hold! returns an ok token for them and commit proceeds.
+            # We already won the claim (status is processing), so roll it back to
+            # the original committable status — otherwise a broke account is stuck
+            # in processing forever with no job enqueued. update_all bypasses
+            # dirty-tracking so the revert always writes.
+            ScribeSession.where(id: session.id).update_all(status: original_status, updated_at: Time.current)
             render_error(
               code: "insufficient_credit",
               message: "Account has insufficient credit to process this session",
@@ -333,10 +378,8 @@ module Api
             next
           end
 
-          session.update!(status: "processing")
           ProcessScribeSessionJob.perform_later(session.id)
-
-          render json: serialize(session), status: :accepted
+          render json: serialize(session.reload), status: :accepted
         end
       end
 
@@ -509,7 +552,17 @@ module Api
             return "form output needs exactly one of page_id or fields" if has_page == has_fields
 
             if has_page
-              unless Page.exists?(id: page_id)
+              # Scope to pages the CALLER may use: its own account's templates or
+              # legacy shared templates (account_id NULL, plan 013). Without this
+              # scope a tenant could name another account's page_id and have the
+              # pipeline read their form schema, prompt, and model assignment.
+              # Same message for foreign vs absent pages so it isn't an existence
+              # oracle.
+              usable = Page.joins(:template)
+                           .where(id: page_id)
+                           .where(templates: { account_id: [ nil, current_account&.id ] })
+                           .exists?
+              unless usable
                 return "page_id #{page_id.inspect} does not reference an existing page"
               end
             else

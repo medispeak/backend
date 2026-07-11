@@ -38,6 +38,29 @@ class RateLimitTest < ActionDispatch::IntegrationTest
     assert response.headers["RateLimit-Reset"].present?
   end
 
+  test "throttles scoped SESSION tokens against the same per-account budget (no bypass)" do
+    skip "rack-attack not installed" unless defined?(Rack::Attack)
+
+    account = create(:account, settings: { "rpm" => 2 })
+    user = create(:user, account: account)
+    api_token = create(:api_token, user: user, account: account)
+    session = create(:scribe_session, account: account, api_token: api_token, user: user)
+    token, = Scribe::SessionToken.mint(session)
+    headers = { "Authorization" => "Bearer #{token}" }
+    url = "/api/v2/scribe_sessions/#{session.id}"
+
+    # Session tokens are stateless (not ApiToken rows); without the discriminator
+    # fallback they skipped throttling entirely. Now they count against the
+    # account's rpm=2 like any other credential.
+    get url, headers: headers
+    assert_response :accepted
+    get url, headers: headers
+    assert_response :accepted
+    get url, headers: headers
+    assert_response :too_many_requests
+    assert_equal "rate_limited", JSON.parse(response.body).dig("error", "code")
+  end
+
   test "does not throttle unauthenticated or non-api requests" do
     skip "rack-attack not installed" unless defined?(Rack::Attack)
 

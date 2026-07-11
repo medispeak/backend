@@ -41,6 +41,14 @@ module Llm
         response = client.post(SPEECH_TO_TEXT_PATH, payload)
         body = response.body
 
+        # A 200 whose body did not parse to a JSON object (e.g. an HTML error
+        # page or gateway body) would otherwise raise TypeError on body["..."],
+        # escaping the Llm::Error hierarchy. Route it through the transient
+        # fallback machinery like a bad response.
+        unless body.is_a?(Hash)
+          raise Llm::BadResponse, "non-JSON response from Sarvam"
+        end
+
         Llm::Result.new(
           text: body["transcript"],
           language: body["language_code"],

@@ -6,11 +6,18 @@ module Api
       include ExceptionHandler
 
       rescue_from Exception, with: :handle_global_exception
+      # A missing required param (seq/chunk/segment) is a client error, not a
+      # 500. Registered after the broad handler so it wins for this class.
+      rescue_from ActionController::ParameterMissing, with: :handle_param_missing
 
       skip_before_action :verify_authenticity_token
       before_action :authenticate!
 
       private
+
+      def handle_param_missing(err)
+        render_error(code: "validation_error", message: "#{err.param} is required", status: :unprocessable_entity)
+      end
 
       # A request is authenticated if it carries EITHER a live account API token
       # OR a valid scoped session token. Account-only actions layer

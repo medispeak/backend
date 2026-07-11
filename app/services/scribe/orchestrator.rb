@@ -86,7 +86,11 @@ module Scribe
       if Scribe::Incremental.enabled? && session.transcript_segments.exists?
         transcript_from_segments!
       else
-        transcript_from_whole_file!(meter: true)
+        # If segments were already transcribed AND metered (e.g. the incremental
+        # flag was flipped OFF mid-session), don't meter this whole-file pass
+        # again — the done segments are the billed quantity. Only meter when no
+        # segment was billed, so the kill-switch path never double-charges.
+        transcript_from_whole_file!(meter: !session.transcript_segments.where(status: "done").exists?)
       end
     rescue Llm::Error => e
       mark_asr_failure!(e)
@@ -138,23 +142,27 @@ module Scribe
       finish_incomplete_segments!
       segments = session.transcript_segments.reload.order(:seq).to_a
 
-      # COMPLETENESS-ONLY fallback: a still-failed segment is a gap, so
-      # re-transcribe the whole file for coverage WITHOUT metering. The
-      # per-segment key "<sid>:segment:<segid>:asr" and the whole-file key
-      # "<sid>:asr" are DISTINCT, so the unique usage-event index would NOT
-      # dedupe a second charge — the fallback must SKIP metering, accepting the
-      # already-metered segments as the billed quantity (a small under-bill for
-      # the failed gap).
-      return transcript_from_whole_file!(meter: false) if segments.any?(&:status_failed?)
+      # COMPLETENESS: assemble from the segments ONLY when every one settled to
+      # done. If any is still failed, or orphaned in 'transcribing' (a killed
+      # worker that outlived the inline wait, or an async job slower than the
+      # 15s poll), concatenating just the done segments would silently DROP that
+      # audio from the clinical transcript — so re-transcribe the whole file for
+      # full coverage. Meter that whole-file pass only when NO segment was
+      # already metered (a done segment is the billed quantity), so the fallback
+      # never double-charges yet a total-failure session is still billed once.
+      # The per-segment usage key and the whole-file key are distinct, so the
+      # unique index does NOT dedupe — the meter flag is the guard.
+      unless segments.all?(&:status_done?)
+        return transcript_from_whole_file!(meter: segments.none?(&:status_done?))
+      end
 
-      done = segments.select(&:status_done?)
       Transcript.create!(
         scribe_session: session,
-        text: done.map(&:text).reject(&:blank?).join(" "),
-        language: done.map(&:language).compact.first,
-        duration_seconds: done.sum { |s| s.duration_seconds.to_f },
-        provider: done.first&.provider,
-        model: done.first&.model
+        text: segments.map(&:text).reject(&:blank?).join(" "),
+        language: segments.map(&:language).compact.first,
+        duration_seconds: segments.sum { |s| s.duration_seconds.to_f },
+        provider: segments.first&.provider,
+        model: segments.first&.model
       )
     end
 
@@ -170,6 +178,10 @@ module Scribe
           wait_for_segment(segment)
         else
           TranscribeSegmentJob.perform_now(segment.id)
+          # If an async job won the atomic claim a moment earlier, perform_now
+          # no-op'd (claim.zero?) and the row is now 'transcribing' — wait for
+          # that job to settle rather than leaving it unsettled for assembly.
+          wait_for_segment(segment) if segment.reload.status_transcribing?
         end
       end
     end

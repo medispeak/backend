@@ -25,8 +25,13 @@ module Scribe
 
     def call
       config = Llm::ConfigResolver.call(function: :realtime, account: @session.account)
-      unless config.provider_kind == :openai_compatible
-        raise Llm::Error, "Realtime is only supported on OpenAI-compatible providers (got #{config.provider_kind})"
+      # Guard on the actual provider identity, not just the kind: OpenRouter and
+      # other OpenAI-compatible providers share the kind but have a different
+      # host and no realtime/client_secrets endpoint. Minting the OpenAI calls
+      # URL (below) against them would hand the browser a token that can't
+      # connect. Require an api.openai.com base.
+      unless openai_host?(config.base_url)
+        raise Llm::Error, "Realtime requires an OpenAI provider assignment (got #{config.provider_name || config.base_url})"
       end
 
       mint_openai(config)
@@ -77,6 +82,12 @@ module Scribe
       return cs["value"] if cs.is_a?(Hash)
 
       resp["value"]
+    end
+
+    def openai_host?(base_url)
+      URI(base_url.to_s).host.to_s.downcase.end_with?("api.openai.com")
+    rescue URI::InvalidURIError
+      false
     end
 
     def connection(config)

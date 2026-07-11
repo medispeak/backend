@@ -31,7 +31,14 @@ if defined?(Rack::Attack)
       next nil unless req.path.start_with?("/api/")
 
       token = req.get_header("HTTP_AUTHORIZATION").to_s.split(" ").last
-      account_id = ApiToken.authenticate(token)&.account_id
+      # Resolve the account behind EITHER credential. Scoped session (mss_)
+      # tokens are stateless MessageVerifier blobs, not ApiToken rows, so
+      # ApiToken.authenticate returns nil for them — without the session-token
+      # fallback every browser-token request (audio, segments, live_form,
+      # realtime_token, commit) skipped throttling entirely, defeating the
+      # per-account cap the whole file exists to enforce.
+      account_id = ApiToken.authenticate(token)&.account_id ||
+                   Rack::Attack.session_token_account_id(token)
       next nil if account_id.nil?
 
       # Resolve this account's per-minute budget and stash it so the `limit`
@@ -40,6 +47,18 @@ if defined?(Rack::Attack)
       req.env["rack.attack.account_rpm"] = (settings["rpm"] || DEFAULT_RPM).to_i
 
       account_id
+    end
+
+    # Resolve a scoped session token (mss_) to its session's account_id with a
+    # single-column lookup, so browser-token traffic counts against the same
+    # per-account budget as account tokens. Returns nil for an invalid token.
+    def self.session_token_account_id(token)
+      claims = Scribe::SessionToken.verify(token)
+      return nil unless claims
+
+      ScribeSession.where(id: claims["sid"]).pick(:account_id)
+    rescue StandardError
+      nil
     end
 
     # Devise auth endpoints are browser-facing (not under /api/) and were
