@@ -55,15 +55,19 @@ module Scribe
       raise Llm::BadResponse, "realtime token mint failed: #{e.message}"
     end
 
-    # A transcription-only realtime session: PCM input, the resolved transcribe
-    # model, and server VAD so partial transcripts finalize on the speaker's
-    # pauses. A language hint is forwarded when the session carries one.
+    # A TRANSCRIPTION session (type: "transcription", NOT "realtime"): PCM input,
+    # the resolved transcribe model, and server VAD so partial transcripts
+    # finalize on the speaker's pauses. type: "realtime" is a speech-to-speech
+    # session that requires a top-level realtime model — OpenAI rejected our
+    # mint with missing_model. A transcription session carries no top-level
+    # model; the model lives under audio.input.transcription. A language hint is
+    # forwarded when the session carries one.
     def session_config(config)
       transcription = { model: config.api_model_id }
       transcription[:language] = @session.language if @session.language.present?
 
       {
-        type: "realtime",
+        type: "transcription",
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24_000 },

@@ -49,7 +49,7 @@ module Api
         assert_equal "ek_realtime_abc", body["token"]
         assert_equal "gpt-4o-transcribe", body["model"]
         assert_equal "https://api.openai.com/v1/realtime/calls", body["url"]
-        assert_equal "realtime", body.dig("session", "type")
+        assert_equal "transcription", body.dig("session", "type")
         assert_equal "gpt-4o-transcribe", body.dig("session", "audio", "input", "transcription", "model")
 
         # The session's language hint is forwarded, and the account key (not the
