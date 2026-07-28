@@ -6,7 +6,7 @@ class AccountTest < ActiveSupport::TestCase
   end
 
   test "requires a name" do
-    refute build(:account, name: nil).valid?
+    assert_not build(:account, name: nil).valid?
   end
 
   test "generates a webhook_secret on create" do

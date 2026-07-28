@@ -32,7 +32,7 @@ class ScribeWebhookSignerTest < ActiveSupport::TestCase
     sig_a = Scribe::WebhookSigner.signature(secret: secret, timestamp: timestamp, payload: %({"a":1}))
     sig_b = Scribe::WebhookSigner.signature(secret: secret, timestamp: timestamp, payload: %({"a":2}))
 
-    refute_equal sig_a, sig_b
+    assert_not_equal sig_a, sig_b
   end
 
   test "changing the timestamp changes the signature" do
@@ -42,6 +42,6 @@ class ScribeWebhookSignerTest < ActiveSupport::TestCase
     sig_a = Scribe::WebhookSigner.signature(secret: secret, timestamp: 1_700_000_000, payload: payload)
     sig_b = Scribe::WebhookSigner.signature(secret: secret, timestamp: 1_700_000_001, payload: payload)
 
-    refute_equal sig_a, sig_b
+    assert_not_equal sig_a, sig_b
   end
 end

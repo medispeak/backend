@@ -6,17 +6,17 @@ class UsageEventTest < ActiveSupport::TestCase
   end
 
   test "requires a function" do
-    refute build(:usage_event, function: nil).valid?
+    assert_not build(:usage_event, function: nil).valid?
   end
 
   test "requires a status" do
     event = build(:usage_event)
     event.status = nil
-    refute event.valid?
+    assert_not event.valid?
   end
 
   test "belongs to an account" do
-    refute build(:usage_event, account: nil).valid?
+    assert_not build(:usage_event, account: nil).valid?
   end
 
   test "api_token is optional" do
@@ -24,7 +24,7 @@ class UsageEventTest < ActiveSupport::TestCase
   end
 
   test "exposes function enum values" do
-    assert_equal %w[asr structuring combined], UsageEvent.functions.keys
+    assert_equal %w[asr structuring ocr], UsageEvent.functions.keys
   end
 
   test "exposes status enum values" do
@@ -34,13 +34,13 @@ class UsageEventTest < ActiveSupport::TestCase
   test "function enum predicates work" do
     event = build(:usage_event, function: "asr")
     assert event.asr?
-    refute event.structuring?
+    assert_not event.structuring?
   end
 
   test "status enum predicates work" do
     event = build(:usage_event, status: "pending")
     assert event.pending?
-    refute event.finalized?
+    assert_not event.finalized?
   end
 
   test "rejects an unknown function" do

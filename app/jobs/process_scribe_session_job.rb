@@ -4,9 +4,14 @@
 # Flow:
 #   1. Load the session (no-op if it was deleted/expired).
 #   2. Move it to :processing.
-#   3. Run Scribe::Orchestrator (which sets the final completed/partial/failed
+#   3. Settle per-segment transcription: finish stragglers inline through the
+#      segment job's atomic claim; if an async job still holds a claim,
+#      RE-ENQUEUE this job with a short wait instead of blocking a worker
+#      thread on a poll loop. The session stays :processing and the client
+#      keeps polling.
+#   4. Run Scribe::Orchestrator (which sets the final completed/partial/failed
 #      status and fills the outputs + transcript).
-#   4. If the session has a callback_url, enqueue ScribeWebhookJob to deliver the
+#   5. If the session has a callback_url, enqueue ScribeWebhookJob to deliver the
 #      PHI-light completion notification.
 #
 # Any unexpected error marks the session :failed with a sanitized message and is
@@ -15,11 +20,21 @@
 # swept to :failed by Metering::ReservationSweeper rather than trued up against
 # the ledger (holds are postpaid and reserve no credit balance).
 class ProcessScribeSessionJob < ApplicationJob
-  def perform(scribe_session_id)
+  # Settlement waits up to MAX_SETTLE_ATTEMPTS * SETTLE_WAIT (~2 minutes,
+  # matching STALE_CLAIM_AGE) for in-flight segment jobs, then treats any
+  # remaining "transcribing" claim as a dead worker: reclaim and retry inline
+  # exactly once before the orchestrator settles the session.
+  MAX_SETTLE_ATTEMPTS = 24
+  SETTLE_WAIT = 5.seconds
+  STALE_CLAIM_AGE = 2.minutes
+
+  def perform(scribe_session_id, settle_attempt = 0)
     session = ScribeSession.find_by(id: scribe_session_id)
     return if session.nil?
 
     session.update!(status: :processing)
+
+    return if settle_segments(session, settle_attempt) == :waiting
 
     Scribe::Orchestrator.new(session).call
 
@@ -39,6 +54,48 @@ class ProcessScribeSessionJob < ApplicationJob
   end
 
   private
+
+  # Brings every transcription segment to a settled status (done/failed) before
+  # the orchestrator assembles the transcript. Returns :waiting when this job
+  # re-enqueued itself to let an in-flight async segment job finish, :settled
+  # otherwise.
+  #
+  # Never calls the provider directly — all transcription goes through
+  # TranscribeSegmentJob's atomic pending/failed -> transcribing claim, so the
+  # async on-arrival job and this commit-time pass can never double-call the
+  # provider for one segment.
+  def settle_segments(session, attempt)
+    return :settled if session.transcript.present?
+
+    segments = session.transcript_segments
+    return :settled unless segments.exists?
+
+    # Stragglers the async path never finished (or that failed): transcribe
+    # inline through the same atomic claim (a no-op if an async job owns them).
+    transcribe_inline(segments.where(status: %w[pending failed]))
+
+    if segments.where(status: "transcribing").exists?
+      if attempt < MAX_SETTLE_ATTEMPTS
+        self.class.set(wait: SETTLE_WAIT).perform_later(session.id, attempt + 1)
+        return :waiting
+      end
+
+      # Out of patience: a claim this old means the worker died mid-call.
+      # Conditionally reclaim (the age guard spares a live-but-slow job) and
+      # retry inline once; whatever is still unsettled after this is reported
+      # by the orchestrator as an explicit per-segment failure.
+      segments.where(status: "transcribing")
+              .where(updated_at: ...STALE_CLAIM_AGE.ago)
+              .update_all(status: "failed", updated_at: Time.current)
+      transcribe_inline(segments.where(status: "failed"))
+    end
+
+    :settled
+  end
+
+  def transcribe_inline(scope)
+    scope.pluck(:id).each { |id| TranscribeSegmentJob.perform_now(id) }
+  end
 
   def enqueue_webhook(session)
     ScribeWebhookJob.perform_later(session.id) if session.callback_url.present?

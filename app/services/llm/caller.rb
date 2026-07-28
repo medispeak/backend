@@ -6,7 +6,7 @@ module Llm
   # Transient errors (Timeout/RateLimited/BadResponse) trigger one fallback
   # attempt if a fallback Config is set. Refusals are NOT retried.
   class Caller
-    TRANSIENT = [Llm::Timeout, Llm::RateLimited, Llm::BadResponse].freeze
+    TRANSIENT = [ Llm::Timeout, Llm::RateLimited, Llm::BadResponse ].freeze
 
     def self.transcribe(config, *args, **kwargs)
       new(config).run(:transcribe, *args, **kwargs)
@@ -14,6 +14,12 @@ module Llm
 
     def self.structure(config, *args, **kwargs)
       new(config).run(:structure, *args, **kwargs)
+    end
+
+    # documents are passed as in-memory bytes (not IOs), so a fallback attempt
+    # re-sends them without any rewind concern.
+    def self.ocr(config, *args, **kwargs)
+      new(config).run(:ocr, *args, **kwargs)
     end
 
     def initialize(config)

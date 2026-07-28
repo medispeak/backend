@@ -22,7 +22,7 @@ class SchemaValidatorTest < Minitest::Test
   end
 
   def test_valid_payload
-    assert validator.valid?({ "age" => 30, "severity" => "low", "symptoms" => ["cough"] })
+    assert validator.valid?({ "age" => 30, "severity" => "low", "symptoms" => [ "cough" ] })
   end
 
   def test_maximum_enforced
@@ -36,7 +36,7 @@ class SchemaValidatorTest < Minitest::Test
   end
 
   def test_multi_select_item_enum_enforced
-    refute validator.valid?({ "symptoms" => ["cough", "sneeze"] })
+    refute validator.valid?({ "symptoms" => [ "cough", "sneeze" ] })
   end
 
   def test_accepts_symbol_keyed_data

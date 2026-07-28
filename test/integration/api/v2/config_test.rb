@@ -23,7 +23,7 @@ module Api
 
         names = body["templates"].map { |t| t["name"] }
         assert_includes names, "Active Template"
-        refute_includes names, "Archived Template"
+        assert_not_includes names, "Archived Template"
       end
 
       test "falls back to default rpm when not set in account settings" do

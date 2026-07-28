@@ -29,6 +29,7 @@ class ScribeSession < ApplicationRecord
   has_many :usage_events, dependent: :nullify
 
   has_many_attached :audio_files
+  has_many_attached :document_files
 
   # Audio upload allowlist + ceiling. The API controllers reject bad uploads
   # before attaching (with a surface-appropriate error); these attachment
@@ -40,9 +41,20 @@ class ScribeSession < ApplicationRecord
   ].freeze
   MAX_AUDIO_BYTES = 25.megabytes
 
+  # Document (OCR modality) allowlist + ceilings. Pages are counted at upload
+  # time (pdf-reader; images count as one page) and accumulated in
+  # document_pages so both the page cap and per-page metering are cheap.
+  ALLOWED_DOCUMENT_TYPES = %w[application/pdf image/jpeg image/png image/webp].freeze
+  MAX_DOCUMENT_BYTES = 20.megabytes
+  MAX_DOCUMENT_FILE_BYTES = 10.megabytes
+  MAX_DOCUMENT_PAGES = 20
+
   validates :audio_files,
             content_type: ALLOWED_AUDIO_TYPES,
             size: { less_than_or_equal_to: MAX_AUDIO_BYTES }
+  validates :document_files,
+            content_type: ALLOWED_DOCUMENT_TYPES,
+            size: { less_than_or_equal_to: MAX_DOCUMENT_BYTES }
 
   enum :status, {
     created: "created",
@@ -57,6 +69,11 @@ class ScribeSession < ApplicationRecord
   # mode default is "consultation" (set at the column level). validate: false
   # keeps unknown/legacy modes from raising on read.
   enum :mode, { dictation: "dictation", consultation: "consultation" }, validate: false
+
+  # What kind of source this session ingests: recorded audio (ASR) or an
+  # uploaded lab report / document (vision OCR). Prefixed predicates
+  # (modality_audio? / modality_document?) keep the bare audio-ish names free.
+  enum :modality, { audio: "audio", document: "document" }, prefix: :modality
 
   validates :status, presence: true
   validate :callback_url_is_safe

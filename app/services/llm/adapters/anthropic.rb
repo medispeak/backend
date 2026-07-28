@@ -44,7 +44,58 @@ module Llm
         raise map_transport_error(e)
       end
 
+      # Document OCR via the Messages API with native image / document (PDF)
+      # content blocks. Returns the full extracted text as Result#text.
+      def ocr(documents:, prompt: nil, **_opts)
+        started = monotonic
+
+        blocks = documents.map { |doc| document_block(doc) }
+        blocks << { type: "text", text: prompt.to_s }
+
+        response = client.post("/v1/messages", {
+          model: config.api_model_id,
+          max_tokens: config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
+          messages: [ { role: "user", content: blocks } ]
+        })
+        resp = response.body
+        text = extract_text(resp)
+
+        Llm::Result.new(
+          text: text,
+          model: config.api_model_id,
+          provider: config.provider_name || config.provider_kind.to_s,
+          usage: usage_from(resp["usage"]),
+          finish_reason: resp["stop_reason"],
+          latency_ms: elapsed_ms(started),
+          raw: resp
+        )
+      rescue Faraday::Error => e
+        raise map_transport_error(e)
+      end
+
       private
+
+      def document_block(doc)
+        source = {
+          type: "base64",
+          media_type: doc[:content_type],
+          data: Base64.strict_encode64(doc[:data])
+        }
+        { type: doc[:content_type] == "application/pdf" ? "document" : "image", source: source }
+      end
+
+      # Joined text blocks. A 2xx with no text is a bad response (refusal or
+      # truncation) and triggers fallback upstream.
+      def extract_text(resp)
+        blocks = resp["content"]
+        raise Llm::BadResponse, "Anthropic response missing content blocks" unless blocks.is_a?(Array)
+
+        text = blocks.select { |b| b.is_a?(Hash) && b["type"] == "text" }
+                     .map { |b| b["text"] }.join("\n")
+        raise Llm::BadResponse, "Anthropic response contained no OCR text" if text.blank?
+
+        text
+      end
 
       def request_body(messages, schema)
         {

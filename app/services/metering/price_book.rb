@@ -13,6 +13,7 @@ module Metering
         unit_price_input = nil
         unit_price_output = nil
         unit_price_audio_min = nil
+        unit_price_page = nil
         currency = "USD"
 
         if audio?(function)
@@ -34,23 +35,39 @@ module Metering
           end
         end
 
+        if pages?(function)
+          page_price = DocumentModelPrice.current(at).find_by(provider: provider, model: model)
+          if page_price
+            unit_price_page = page_price.price_per_page
+            currency = page_price.currency || currency
+            total += usage&.pages.to_i * page_price.price_per_page.to_f
+          end
+        end
+
         {
           cost: total.round(ROUNDING),
           currency: currency,
           unit_price_input: unit_price_input,
           unit_price_output: unit_price_output,
-          unit_price_audio_min: unit_price_audio_min
+          unit_price_audio_min: unit_price_audio_min,
+          unit_price_page: unit_price_page
         }
       end
 
       private
 
       def audio?(function)
-        function == :asr || function == :combined
+        function == :asr
       end
 
+      # Vision providers bill OCR in tokens, so :ocr always consults the token
+      # table; a DocumentModelPrice row adds an optional per-page component.
       def tokens?(function)
-        function == :structuring || function == :combined
+        function == :structuring || function == :ocr
+      end
+
+      def pages?(function)
+        function == :ocr
       end
 
       def audio_cost(usage, price)

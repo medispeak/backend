@@ -33,18 +33,18 @@ class ScribeOutputTest < ActiveSupport::TestCase
   test "output_type predicates work" do
     output = build(:scribe_output, output_type: "form")
     assert output.form?
-    refute output.note?
+    assert_not output.note?
   end
 
   test "status predicates use a prefix and do not collide with output_type" do
     output = build(:scribe_output, output_type: "form", status: "partial")
     # status predicates are prefixed
     assert output.status_partial?
-    refute output.status_success?
+    assert_not output.status_success?
     # output_type predicates remain unprefixed and independent
     assert output.form?
     # the bare `partial?` predicate is NOT defined for status (no collision)
-    refute output.respond_to?(:partial?)
+    assert_not output.respond_to?(:partial?)
   end
 
   test "output_type and status can both be partial without conflict" do
@@ -61,14 +61,14 @@ class ScribeOutputTest < ActiveSupport::TestCase
 
   test "requires an output_type" do
     output = build(:scribe_output, output_type: nil)
-    refute output.valid?
+    assert_not output.valid?
     assert_includes output.errors[:output_type], "can't be blank"
   end
 
   test "requires a status" do
     output = build(:scribe_output)
     output.status = nil
-    refute output.valid?
+    assert_not output.valid?
     assert_includes output.errors[:status], "can't be blank"
   end
 

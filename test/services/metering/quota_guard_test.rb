@@ -11,7 +11,7 @@ class MeteringQuotaGuardTest < ActiveSupport::TestCase
     end
 
     assert token.ok?
-    refute token.unlimited?
+    assert_not token.unlimited?
     assert_equal "hold", token.transaction.txn_type
     assert_equal 10, token.transaction.amount.to_f
   end
@@ -25,7 +25,7 @@ class MeteringQuotaGuardTest < ActiveSupport::TestCase
       token = Metering::QuotaGuard.hold!(account: account, estimate: 10)
     end
 
-    refute token.ok?
+    assert_not token.ok?
   end
 
   test "hold is a no-op unlimited token when no AccountCredit exists" do

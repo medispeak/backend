@@ -11,6 +11,7 @@ class ScribeSessionSerializer
       id: @session.id,
       status: @session.status,
       mode: @session.mode,
+      modality: @session.modality,
       language: @session.language,
       created_at: @session.created_at,
       expires_at: @session.expires_at,
@@ -32,6 +33,7 @@ class ScribeSessionSerializer
       cost: events.sum { |e| e.cost.to_f },
       total_tokens: events.sum { |e| e.total_tokens.to_i },
       audio_seconds: events.sum { |e| e.audio_seconds.to_f },
+      pages: events.sum { |e| e.pages.to_i },
       by_function: events.group_by(&:function)
                          .transform_values { |es| es.sum { |e| e.cost.to_f } }
     }

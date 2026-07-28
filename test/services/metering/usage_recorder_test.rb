@@ -33,7 +33,7 @@ class MeteringUsageRecorderTest < ActiveSupport::TestCase
     assert_in_delta 0.45, event.cost.to_f, 1e-9
     assert_equal 0.15, event.unit_price_input.to_f
     assert_equal 0.60, event.unit_price_output.to_f
-    refute event.estimated
+    assert_not event.estimated
   end
 
   test "records audio seconds and audio unit price for asr" do
@@ -68,7 +68,7 @@ class MeteringUsageRecorderTest < ActiveSupport::TestCase
     assert_equal 0, event.total_tokens
     assert_in_delta 0.0, event.audio_seconds.to_f, 1e-9
     assert_equal 0, event.cost.to_f
-    refute event.estimated
+    assert_not event.estimated
   end
 
   test "links api_token, scribe_session, and scribe_output and persists dedupe_key" do
@@ -76,7 +76,7 @@ class MeteringUsageRecorderTest < ActiveSupport::TestCase
     account = token.account
     result = Llm::Result.new(structured: {}, model: "m", provider: "p", usage: nil)
 
-    session = Struct.new(:id).new(42)
+    session = Struct.new(:id, :user_id).new(42, 7)
     output = Struct.new(:id).new(99)
 
     event = Metering::UsageRecorder.record(
@@ -93,6 +93,18 @@ class MeteringUsageRecorderTest < ActiveSupport::TestCase
     assert_equal 42, event.scribe_session_id
     assert_equal 99, event.scribe_output_id
     assert_equal "abc-123", event.dedupe_key
+    assert_equal 7, event.user_id, "the session's acting user is denormalized onto the event"
+  end
+
+  test "attributes user_id from the api_token owner when the session carries no user" do
+    token = create(:api_token)
+    result = Llm::Result.new(structured: {}, model: "m", provider: "p", usage: nil)
+
+    event = Metering::UsageRecorder.record(
+      account: token.account, function: :structuring, result: result, api_token: token
+    )
+
+    assert_equal token.user_id, event.user_id
   end
 
   test "can record a pending event" do

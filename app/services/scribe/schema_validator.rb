@@ -23,11 +23,11 @@ module Scribe
     # [repaired, remaining_errors]. Without a block, returns [data, errors].
     def validate_and_repair(data)
       errs = errors(data)
-      return [data, []] if errs.empty?
-      return [data, errs] unless block_given?
+      return [ data, [] ] if errs.empty?
+      return [ data, errs ] unless block_given?
 
       repaired = yield(errs)
-      [repaired, errors(repaired)]
+      [ repaired, errors(repaired) ]
     end
 
     private

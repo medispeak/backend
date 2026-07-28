@@ -16,7 +16,7 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
   # every field to required+nullable).
   def chat_body(content, finish: "stop")
     {
-      choices: [{ message: { content: content.to_json }, finish_reason: finish }],
+      choices: [ { message: { content: content.to_json }, finish_reason: finish } ],
       usage: { prompt_tokens: 10, completion_tokens: 4 }
     }.to_json
   end
@@ -198,7 +198,7 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
 
     form_output.reload
     assert form_output.status_failure?
-    refute_empty form_output.result_errors
+    assert_not_empty form_output.result_errors
 
     assert_equal "partial", session.reload.status
 
@@ -287,7 +287,7 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
 
     transcript_output.reload
     assert transcript_output.status_failure?
-    refute_empty transcript_output.result_errors
+    assert_not_empty transcript_output.result_errors
 
     # No structuring or ASR usage events on a failed-before-persist ASR.
     assert_equal 0, UsageEvent.where(scribe_session_id: session.id).count
@@ -453,7 +453,7 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     form_output.reload
     # Either success or partial depending on repair, but never failure, and a
     # structuring usage_event is recorded for the token-consuming attempt.
-    refute form_output.status_failure?
+    assert_not form_output.status_failure?
     assert UsageEvent.where(scribe_session_id: session.id, function: "structuring").exists?
   end
 

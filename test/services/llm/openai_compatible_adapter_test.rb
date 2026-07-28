@@ -30,7 +30,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
   end
 
   def chat_body(content: { "name" => "Jane" }, finish: "stop")
-    { choices: [{ message: { content: content.to_json }, finish_reason: finish }],
+    { choices: [ { message: { content: content.to_json }, finish_reason: finish } ],
       usage: { prompt_tokens: 12, completion_tokens: 4 } }.to_json
   end
 
@@ -44,7 +44,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
       .to_return(status: 200, headers: { "Content-Type" => "application/json" },
                  body: { text: "namaste doctor" }.to_json)
 
-    file = Tempfile.new(["clip", ".mp3"]); file.write("x"); file.rewind
+    file = Tempfile.new([ "clip", ".mp3" ]); file.write("x"); file.rewind
     result = adapter.transcribe(file, language: "hi", mode: :transcribe, audio_seconds: 30)
 
     assert_equal "namaste doctor", result.text
@@ -59,7 +59,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
     stub_request(:post, "https://api.openai.com/v1/chat/completions")
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: chat_body)
 
-    result = adapter.structure(messages: [{ role: "user", content: "hi" }], schema: core_schema)
+    result = adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
 
     assert_equal({ "name" => "Jane" }, result.structured)
     assert_equal "stop", result.finish_reason
@@ -71,8 +71,8 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
       rf = body["response_format"]
       rf && rf["type"] == "json_schema" &&
         rf.dig("json_schema", "strict") == true &&
-        rf.dig("json_schema", "schema", "required") == ["name"] &&
-        rf.dig("json_schema", "schema", "properties", "name", "type") == ["string", "null"]
+        rf.dig("json_schema", "schema", "required") == [ "name" ] &&
+        rf.dig("json_schema", "schema", "properties", "name", "type") == [ "string", "null" ]
     end
   end
 
@@ -82,7 +82,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
                  body: { error: { message: "slow down" } }.to_json)
 
     assert_raises(Llm::RateLimited) do
-      adapter.structure(messages: [{ role: "user", content: "hi" }], schema: core_schema)
+      adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
     end
   end
 
@@ -92,7 +92,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
                  body: { error: { message: "boom" } }.to_json)
 
     assert_raises(Llm::BadResponse) do
-      adapter.structure(messages: [{ role: "user", content: "hi" }], schema: core_schema)
+      adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
     end
   end
 
@@ -142,7 +142,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
     fb = config(base_url: "https://fallback.test/")
     primary = config(base_url: "https://primary.test/", fallback: fb)
 
-    result = Llm::Caller.structure(primary, messages: [{ role: "user", content: "hi" }], schema: core_schema)
+    result = Llm::Caller.structure(primary, messages: [ { role: "user", content: "hi" } ], schema: core_schema)
     assert_equal({ "name" => "Fallback" }, result.structured)
     assert_requested(:post, "https://fallback.test/v1/chat/completions", times: 1)
   end
@@ -152,7 +152,7 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
       .to_return(status: 429, body: { error: {} }.to_json, headers: { "Content-Type" => "application/json" })
 
     assert_raises(Llm::RateLimited) do
-      Llm::Caller.structure(config, messages: [{ role: "user", content: "hi" }], schema: core_schema)
+      Llm::Caller.structure(config, messages: [ { role: "user", content: "hi" } ], schema: core_schema)
     end
   end
 end

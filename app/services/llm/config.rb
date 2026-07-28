@@ -1,6 +1,6 @@
 module Llm
-  # Immutable, resolved configuration for one function call (asr/structuring/
-  # combined). Built by ConfigResolver (DB) or DefaultConfigProvider (ENV).
+  # Immutable, resolved configuration for one function call (asr/structuring).
+  # Built by ConfigResolver (DB) or DefaultConfigProvider (ENV).
   #
   # The API key is resolved lazily: pass either an `api_key` string or an
   # `api_key_resolver` callable (so resolver unit tests need no real key, and

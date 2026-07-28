@@ -5,7 +5,7 @@ module Api
   module V2
     # Regression coverage for the 2026-07 audit fixes on the v2 scribe surface:
     # cross-tenant page_id, unconditional status reset on /audio, param-missing
-    # 500s, the commit race guard, and the realtime/live-form credit gates.
+    # 500s, and the commit race guard.
     class AuditFixesTest < ActionDispatch::IntegrationTest
       setup do
         Rails.cache.clear if Rails.cache.respond_to?(:clear)
@@ -56,7 +56,6 @@ module Api
       # ---- Param-missing -> 422 not 500 (finding 20) -----------------------
 
       test "a missing chunk param returns 422 validation_error, not a 500" do
-        Scribe::Incremental.stubs(:enabled?).returns(true)
         session = create(:scribe_session, account: @account, api_token: @token, user: @user)
         tok, = Scribe::SessionToken.mint(session)
 
@@ -95,34 +94,6 @@ module Api
         assert_response :internal_server_error
         assert_equal "uploading", session.reload.status,
                      "the claim must roll back so the session stays committable"
-      end
-
-      # ---- Realtime credit gate (findings 5/16) ----------------------------
-
-      test "realtime_token is 402 for a broke account and mints nothing" do
-        Scribe::Realtime.stubs(:enabled?).returns(true)
-        create(:account_credit, account: @account, balance: 0)
-        session = create(:scribe_session, account: @account, api_token: @token, user: @user)
-        tok, = Scribe::SessionToken.mint(session)
-
-        Scribe::RealtimeToken.expects(:call).never
-        post "/api/v2/scribe_sessions/#{session.id}/realtime_token", headers: { "Authorization" => "Bearer #{tok}" }
-
-        assert_response :payment_required
-        assert_equal "insufficient_credit", JSON.parse(response.body).dig("error", "code")
-      end
-
-      test "live_form returns empty (no LLM) for an in-debt account even with the flag on" do
-        Scribe::Incremental.stubs(:live_form_enabled?).returns(true)
-        create(:account_credit, account: @account, balance: -1) # negative -> blocked
-        session = create(:scribe_session, account: @account, api_token: @token, user: @user)
-        tok, = Scribe::SessionToken.mint(session)
-
-        Scribe::LiveStructurer.any_instance.expects(:call).never
-        get "/api/v2/scribe_sessions/#{session.id}/live_form", headers: { "Authorization" => "Bearer #{tok}" }
-
-        assert_response :ok
-        assert_equal({}, JSON.parse(response.body).fetch("structured_data"))
       end
 
       private

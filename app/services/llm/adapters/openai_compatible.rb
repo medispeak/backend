@@ -64,7 +64,52 @@ module Llm
         raise map_transport_error(e)
       end
 
+      # Document OCR through the chat endpoint with multimodal content parts:
+      # images as base64 data-URL image_url parts, PDFs as base64 file parts
+      # (gpt-4o/4.1 family). Returns the full extracted text as Result#text.
+      def ocr(documents:, prompt: nil, **_opts)
+        started = monotonic
+        parts = [ { type: "text", text: prompt.to_s } ]
+        documents.each { |doc| parts << document_part(doc) }
+
+        response = client.chat(parameters: {
+          model: config.api_model_id,
+          messages: [ { role: "user", content: parts } ]
+        })
+        choice = response.dig("choices", 0) || {}
+        finish_reason = choice["finish_reason"]
+        text = choice.dig("message", "content")
+
+        # Same early-stop guard as #structure: a truncated extraction would
+        # silently drop part of a clinical document.
+        if finish_reason && !%w[stop].include?(finish_reason.to_s)
+          raise Llm::BadResponse, "model did not complete (finish_reason=#{finish_reason})"
+        end
+        raise Llm::BadResponse, "provider returned no OCR text" if text.blank?
+
+        Llm::Result.new(
+          text: text,
+          model: config.api_model_id,
+          provider: config.provider_name || config.provider_kind.to_s,
+          usage: usage_from(response["usage"]),
+          finish_reason: finish_reason,
+          latency_ms: elapsed_ms(started),
+          raw: response
+        )
+      rescue Faraday::Error => e
+        raise map_transport_error(e)
+      end
+
       private
+
+      def document_part(doc)
+        data_url = "data:#{doc[:content_type]};base64,#{Base64.strict_encode64(doc[:data])}"
+        if doc[:content_type] == "application/pdf"
+          { type: "file", file: { filename: doc[:filename].presence || "document.pdf", file_data: data_url } }
+        else
+          { type: "image_url", image_url: { url: data_url } }
+        end
+      end
 
       # A 200 whose content is not valid JSON is a truncated/garbled response,
       # not a transport error. Map it to a transient BadResponse so Caller falls
@@ -117,7 +162,7 @@ module Llm
         return prop unless prop.is_a?(Hash) && prop.key?(:type)
 
         type = prop[:type]
-        new_type = type.is_a?(Array) ? (type | ["null"]) : [type, "null"]
+        new_type = type.is_a?(Array) ? (type | [ "null" ]) : [ type, "null" ]
         prop.merge(type: new_type)
       end
 

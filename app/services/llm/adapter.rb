@@ -18,6 +18,13 @@ module Llm
       raise NotImplementedError, "#{self.class} must implement #structure"
     end
 
+    # documents: [{ data: <bytes>, content_type:, filename: }] -> full extracted
+    # text as Result#text. Vision-capable adapters implement this; others raise
+    # so a misrouted call fails loudly (mirrors Anthropic#transcribe).
+    def ocr(documents:, prompt: nil, **)
+      raise Llm::BadResponse, "#{self.class.name.demodulize} does not support document OCR"
+    end
+
     private
 
     # Maps a Faraday error (raised via `f.response :raise_error`) to an Llm error.

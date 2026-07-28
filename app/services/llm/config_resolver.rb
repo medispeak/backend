@@ -1,5 +1,5 @@
 module Llm
-  # Resolves an Llm::Config for a function (asr/structuring/combined) using the
+  # Resolves an Llm::Config for a function (asr/structuring) using the
   # most-specific ModelAssignment: Page -> Account -> System. Falls back to the
   # ENV-based DefaultConfigProvider when no assignment exists.
   #
@@ -35,13 +35,16 @@ module Llm
       nil
     end
 
-    # Most-specific first: Page -> Template -> Account -> System.
+    # Most-specific first: Page -> Template -> Account -> ancestor accounts up
+    # the tenancy tree (nearest first) -> System. An assignment set at an org
+    # root cascades to every program/facility below it unless a more specific
+    # node overrides it.
     def scopes
       result = []
-      result << ["Page", @page.id] if @page
-      result << ["Template", @page.template_id] if @page&.template_id
-      result << ["Account", @account.id] if @account
-      result << ["System", nil]
+      result << [ "Page", @page.id ] if @page
+      result << [ "Template", @page.template_id ] if @page&.template_id
+      @account&.self_and_ancestors&.each { |account| result << [ "Account", account.id ] }
+      result << [ "System", nil ]
       result
     end
 

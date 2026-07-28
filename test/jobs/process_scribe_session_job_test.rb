@@ -2,6 +2,8 @@ require "test_helper"
 require "mocha/minitest"
 
 class ProcessScribeSessionJobTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
   ASR_URL = "https://api.openai.com/v1/audio/transcriptions".freeze
   CHAT_URL = "https://api.openai.com/v1/chat/completions".freeze
 
@@ -24,7 +26,7 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
       status: 200,
       headers: { "Content-Type" => "application/json" },
       body: {
-        choices: [{ message: { content: content.to_json }, finish_reason: "stop" }],
+        choices: [ { message: { content: content.to_json }, finish_reason: "stop" } ],
         usage: { prompt_tokens: 10, completion_tokens: 4 }
       }.to_json
     )
@@ -104,6 +106,78 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
     assert_requested webhook_stub, times: 1
   end
 
+  # --- Segment settlement (job continuation, no in-job polling) ---
+
+  def add_segment(session, seq:, status:, updated_at: nil)
+    seg = session.transcript_segments.create!(seq: seq, status: status)
+    seg.data.attach(io: StringIO.new("seg-bytes"), filename: "s.webm", content_type: "audio/webm")
+    seg.update_column(:updated_at, updated_at) if updated_at
+    seg
+  end
+
+  test "settles a pending segment inline and assembles the transcript from segments" do
+    stub_asr(text: "settled inline")
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "pending")
+    create(:scribe_output, scribe_session: session, output_type: "transcript")
+
+    ProcessScribeSessionJob.perform_now(session.id)
+
+    session.reload
+    assert_equal "completed", session.status
+    assert_equal "settled inline", session.transcript.text
+    assert_requested :post, ASR_URL, times: 1
+  end
+
+  test "re-enqueues itself with a wait while an async segment claim is in flight" do
+    old_adapter = ActiveJob::Base.queue_adapter
+    ActiveJob::Base.queue_adapter = :test
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "transcribing")
+
+    assert_enqueued_with(job: ProcessScribeSessionJob, args: [ session.id, 1 ]) do
+      ProcessScribeSessionJob.perform_now(session.id)
+    end
+
+    assert_equal "processing", session.reload.status,
+                 "session stays processing while settlement waits; the client keeps polling"
+    assert_nil session.transcript
+    assert_not_requested :post, ASR_URL
+  ensure
+    ActiveJob::Base.queue_adapter = old_adapter
+  end
+
+  test "reclaims a stale transcribing claim at the attempt bound and finishes inline" do
+    stub_asr(text: "reclaimed and transcribed")
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "transcribing",
+                updated_at: 3.minutes.ago)
+    create(:scribe_output, scribe_session: session, output_type: "transcript")
+
+    ProcessScribeSessionJob.perform_now(session.id, ProcessScribeSessionJob::MAX_SETTLE_ATTEMPTS)
+
+    session.reload
+    assert_equal "completed", session.status
+    assert_equal "reclaimed and transcribed", session.transcript.text
+  end
+
+  test "a fresh transcribing claim at the attempt bound is NOT reclaimed and fails explicitly" do
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "transcribing")
+
+    ProcessScribeSessionJob.perform_now(session.id, ProcessScribeSessionJob::MAX_SETTLE_ATTEMPTS)
+
+    session.reload
+    assert_equal "failed", session.status
+    assert_includes session.error["message"], "segment(s) 0"
+    assert_equal "transcribing", session.transcript_segments.first.status,
+                 "a live-but-slow worker's claim must not be stolen"
+    assert_not_requested :post, ASR_URL
+  end
+
   test "webhook body is PHI-light and carries no transcript text or field values" do
     stub_asr(text: "secret transcript content")
     stub_chat({ "diagnosis" => "secret diagnosis value" })
@@ -121,8 +195,8 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
     ProcessScribeSessionJob.perform_now(session.id)
 
     assert_not_nil captured_body
-    refute_includes captured_body, "secret transcript content"
-    refute_includes captured_body, "secret diagnosis value"
+    assert_not_includes captured_body, "secret transcript content"
+    assert_not_includes captured_body, "secret diagnosis value"
 
     parsed = JSON.parse(captured_body)
     assert_equal session.id, parsed["session_id"]

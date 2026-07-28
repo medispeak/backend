@@ -31,13 +31,13 @@ class StructuringStageTest < Minitest::Test
   end
 
   def fields
-    [StageField.new(title: "age", friendly_name: "Age", field_type: "number", minimum: "0", maximum: "120"),
-     StageField.new(title: "name", friendly_name: "Name", field_type: "string")]
+    [ StageField.new(title: "age", friendly_name: "Age", field_type: "number", minimum: "0", maximum: "120"),
+     StageField.new(title: "name", friendly_name: "Name", field_type: "string") ]
   end
 
   def chat_stub(content, finish: "stop")
     { status: 200, headers: { "Content-Type" => "application/json" },
-      body: { choices: [{ message: { content: content.to_json }, finish_reason: finish }],
+      body: { choices: [ { message: { content: content.to_json }, finish_reason: finish } ],
               usage: { prompt_tokens: 5, completion_tokens: 2 } }.to_json }
   end
 
@@ -95,7 +95,7 @@ class AsrStageTest < Minitest::Test
     stub_request(:post, "https://api.openai.com/v1/audio/transcriptions")
       .to_return(status: 200, headers: { "Content-Type" => "application/json" },
                  body: { text: "hello world" }.to_json)
-    file = Tempfile.new(["a", ".mp3"]); file.write("x"); file.rewind
+    file = Tempfile.new([ "a", ".mp3" ]); file.write("x"); file.rewind
 
     res = Scribe::AsrStage.new(config: config).call(file, language: "en", mode: :transcribe, audio_seconds: 12)
 

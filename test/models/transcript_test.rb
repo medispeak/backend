@@ -7,7 +7,7 @@ class TranscriptTest < ActiveSupport::TestCase
 
   test "requires a scribe_session" do
     transcript = build(:transcript, scribe_session: nil)
-    refute transcript.valid?
+    assert_not transcript.valid?
   end
 
   test "belongs to a scribe_session" do

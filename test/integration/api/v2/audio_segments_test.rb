@@ -25,10 +25,6 @@ module Api
         @prev_openai_token = ENV["OPENAI_ACCESS_TOKEN"]
         ENV["OPENAI_ACCESS_TOKEN"] = "test-key"
         stub_openai!
-
-        # The incremental path is OFF by default; enable it for these tests. The
-        # flag-off test re-stubs this to false.
-        Scribe::Incremental.stubs(:enabled?).returns(true)
       end
 
       teardown do
@@ -104,15 +100,15 @@ module Api
         assert_requested :post, %r{/v1/audio/transcriptions}, times: 2
       end
 
-      test "an all-failed-segment session falls back to a whole-file ASR pass, billed exactly once" do
-        # ASR sequence: segment arrival fails, the commit-time inline retry fails,
-        # and only the whole-file fallback succeeds — so the segment stays failed
-        # and the completeness fallback is exercised.
+      test "a failed segment fails the commit explicitly; re-commit retries exactly that segment" do
+        # ASR sequence: segment arrival fails, the first commit's inline retry
+        # fails (session finalizes failed — never a silent whole-file
+        # substitute), and the re-commit's retry succeeds.
         Scribe::AsrStage.any_instance.stubs(:call)
           .raises(Llm::BadResponse.new("segment boom")).then
           .raises(Llm::BadResponse.new("segment boom")).then
           .returns(Scribe::AsrStage::Result.new(
-            text: "whole file transcript", language: "en",
+            text: "retried segment transcript", language: "en",
             duration_seconds: 3.0, model: "whisper-1", provider: "openai_compatible",
             usage: nil
           ))
@@ -122,7 +118,8 @@ module Api
         assert_equal "failed", @session.transcript_segments.find_by(seq: 0).status,
                      "a segment whose ASR raised must be left failed"
 
-        # A storage blob must exist for the whole-file fallback to read.
+        # The parallel storage stream exists too — it must NEVER be used as a
+        # transcript source for a session that has segments.
         post audio_url, params: { audio: single_shot_upload("full-storage-audio") }, headers: @auth
         assert_response :ok
 
@@ -132,37 +129,36 @@ module Api
         assert_response :accepted
 
         @session.reload
-        assert_equal "completed", @session.status
-        assert_not_nil @session.transcript
-        assert_equal "whole file transcript", @session.transcript.text,
-                     "the whole-file fallback must yield a complete transcript"
+        assert_equal "failed", @session.status,
+                     "an unsettled segment is a loud failure, not a silent whole-file fallback"
+        assert_nil @session.transcript
+        assert_includes @session.error["message"], "segment(s) 0"
+        assert_equal 0, asr_usage_event_count, "two failed attempts must charge nothing"
 
-        # No segment succeeded (nothing was metered), so the whole-file fallback
-        # is the SOLE transcription and IS billed — exactly once. (Previously it
-        # was skipped, giving the account a free transcript. When SOME segments
-        # are done+metered, the fallback is NOT metered — covered in
-        # orchestrator_segments_test — so this never double-charges.)
+        # Re-commit (failed -> processing) retries exactly the failed segment.
+        post commit_url, headers: @auth
+        assert_response :accepted
+
+        @session.reload
+        assert_equal "completed", @session.status
+        assert_equal "retried segment transcript", @session.transcript.text,
+                     "the transcript comes from the retried segment, never the storage blob"
         assert_equal 1, asr_usage_event_count,
-                     "the sole (whole-file) transcription must be metered exactly once"
+                     "the sole successful segment attempt is metered exactly once"
       end
 
-      test "with the incremental flag OFF the segments endpoint 404s and commit uses the whole-file ASR path" do
-        Scribe::Incremental.stubs(:enabled?).returns(false)
-
+      test "a segments-only session (no storage stream) is committable" do
         post segments_url, params: { seq: 0, segment: segment_upload("seg-zero") }, headers: @auth
-        assert_response :not_found
-        assert_equal "session_not_found", JSON.parse(response.body).dig("error", "code")
-        assert_equal 0, @session.transcript_segments.count, "a 404'd segment must not be stored"
-
-        # The pre-existing single-shot upload + commit path is unchanged.
-        post audio_url, params: { audio: single_shot_upload("full-storage-audio") }, headers: @auth
         assert_response :ok
+        assert_equal "done", @session.transcript_segments.find_by(seq: 0).status
+
         post commit_url, headers: @auth
         assert_response :accepted
 
         @session.reload
         assert_equal "completed", @session.status
         assert_not_nil @session.transcript
+        assert_requested :post, %r{/v1/audio/transcriptions}, times: 1
       end
 
       test "a segment whose ASR fails still returns 200 and leaves the row failed" do

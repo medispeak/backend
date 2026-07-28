@@ -8,7 +8,7 @@ class ScribeSessionTest < ActiveSupport::TestCase
   test "requires a status" do
     session = build(:scribe_session)
     session.status = nil
-    refute session.valid?
+    assert_not session.valid?
     assert_includes session.errors[:status], "can't be blank"
   end
 
@@ -31,7 +31,7 @@ class ScribeSessionTest < ActiveSupport::TestCase
   test "status enum predicates work" do
     session = build(:scribe_session, status: "processing")
     assert session.processing?
-    refute session.completed?
+    assert_not session.completed?
   end
 
   test "mode enum exposes dictation and consultation" do
@@ -46,7 +46,7 @@ class ScribeSessionTest < ActiveSupport::TestCase
 
   test "expired? is false when expires_at is in the future" do
     session = build(:scribe_session, expires_at: 1.day.from_now)
-    refute session.expired?
+    assert_not session.expired?
   end
 
   test "expired? is true when expires_at is in the past" do
@@ -56,7 +56,7 @@ class ScribeSessionTest < ActiveSupport::TestCase
 
   test "expired? is false when expires_at is nil" do
     session = build(:scribe_session, expires_at: nil)
-    refute session.expired?
+    assert_not session.expired?
   end
 
   test "has many scribe_outputs destroyed with the session" do

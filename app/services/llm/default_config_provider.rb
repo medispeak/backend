@@ -13,7 +13,9 @@ module Llm
     DEFAULT_MODELS = {
       asr: "whisper-1",
       structuring: "gpt-4o-mini",
-      realtime: "gpt-4o-transcribe"
+      # gpt-4o-mini accepts images and PDF file parts — a sensible OCR
+      # bootstrap until operators assign a stronger vision model per client.
+      ocr: "gpt-4o-mini"
     }.freeze
 
     def self.call(function:, fallback: nil)
@@ -46,8 +48,8 @@ module Llm
         { accepts_audio: true, can_transcribe: true }
       when :structuring
         { can_structure: true, supports_json_schema: true, supports_function_calling: true }
-      when :realtime
-        { accepts_audio: true, can_transcribe: true, realtime: true }
+      when :ocr
+        { supports_vision: true, supports_pdf: true }
       else
         {}
       end

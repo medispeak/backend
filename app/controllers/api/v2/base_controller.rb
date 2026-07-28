@@ -11,6 +11,13 @@ module Api
       rescue_from ActionController::ParameterMissing, with: :handle_param_missing
 
       skip_before_action :verify_authenticity_token
+      # The API authenticates with bearer tokens, not a Devise session, and
+      # scopes every query to the token's account rather than through Pundit.
+      # ApplicationController's session/authorization filters therefore do not
+      # apply here — leaving them on would reject every API request.
+      skip_before_action :authenticate_user!
+      skip_after_action :verify_authorized
+      skip_after_action :verify_policy_scoped
       before_action :authenticate!
 
       private

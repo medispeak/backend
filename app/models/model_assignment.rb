@@ -1,6 +1,6 @@
 class ModelAssignment < ApplicationRecord
   SCOPES = %w[System Account Template Page].freeze
-  FUNCTIONS = %w[asr structuring combined realtime].freeze
+  FUNCTIONS = %w[asr structuring ocr].freeze
 
   belongs_to :ai_model
   belongs_to :fallback_ai_model, class_name: "AiModel", optional: true

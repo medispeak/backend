@@ -49,12 +49,12 @@ class AnthropicAdapterTest < Minitest::Test
   def core_schema
     { type: "object", additionalProperties: false,
       properties: { "name" => { type: "string", description: "Name" } },
-      required: ["name"] }
+      required: [ "name" ] }
   end
 
   def messages
-    [{ role: "system", content: "You are an extractor." },
-     { role: "user", content: "Patient is Jane." }]
+    [ { role: "system", content: "You are an extractor." },
+     { role: "user", content: "Patient is Jane." } ]
   end
 
   def test_structure_parses_tool_use_input
@@ -87,11 +87,11 @@ class AnthropicAdapterTest < Minitest::Test
         body["max_tokens"] == 4096 &&
         body["system"] == "You are an extractor." &&
         # system message is hoisted out; only user/assistant turns remain
-        body["messages"] == [{ "role" => "user", "content" => "Patient is Jane." }] &&
+        body["messages"] == [ { "role" => "user", "content" => "Patient is Jane." } ] &&
         body.dig("tools", 0, "name") == "extraction" &&
         body.dig("tools", 0, "description") == "Extract structured data" &&
         # input_schema passed through as-is (real required subset, no nullable transform)
-        body.dig("tools", 0, "input_schema", "required") == ["name"] &&
+        body.dig("tools", 0, "input_schema", "required") == [ "name" ] &&
         body.dig("tools", 0, "input_schema", "properties", "name", "type") == "string" &&
         body["tool_choice"] == { "type" => "tool", "name" => "extraction" }
     end
@@ -112,20 +112,20 @@ class AnthropicAdapterTest < Minitest::Test
     stub_request(:post, ENDPOINT)
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: messages_body)
 
-    only_user = [{ role: "user", content: "Patient is Jane." }]
+    only_user = [ { role: "user", content: "Patient is Jane." } ]
     adapter.structure(messages: only_user, schema: core_schema)
 
     assert_requested(:post, ENDPOINT) do |req|
       body = JSON.parse(req.body)
       body["system"].nil? &&
-        body["messages"] == [{ "role" => "user", "content" => "Patient is Jane." }]
+        body["messages"] == [ { "role" => "user", "content" => "Patient is Jane." } ]
     end
   end
 
   def test_missing_tool_use_block_maps_to_bad_response
     body = {
       stop_reason: "end_turn",
-      content: [{ type: "text", text: "I cannot do that." }],
+      content: [ { type: "text", text: "I cannot do that." } ],
       usage: { "input_tokens" => 5, "output_tokens" => 3 }
     }.to_json
     stub_request(:post, ENDPOINT)

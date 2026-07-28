@@ -68,29 +68,27 @@ module Scribe
 
     attr_reader :session
 
-    # Runs ASR a single time for the session (shared by every output). Returns
-    # the persisted Transcript, or nil if ASR failed (in which case the session
-    # and all outputs have already been marked failed).
+    # Extracts the session's source text a single time (shared by every
+    # output) and persists it as the Transcript. Returns the Transcript, or nil
+    # if extraction failed (session and outputs already marked failed).
     #
-    # When the incremental flag is ON and transcription SEGMENTS exist (plan 022
-    # incremental path) the transcript is assembled from their ordered texts —
-    # each segment was already transcribed + metered on arrival, so there is no
-    # whole-file ASR re-download in the happy path. Otherwise (flag off — even if
-    # stale segments exist from before it was flipped — or single-shot/chunked
-    # storage only) the whole-file path runs and meters :asr exactly as before.
-    # Gating on the flag here makes SCRIBE_INCREMENTAL_ASR=false a true kill
-    # switch: every commit routes through the proven whole-file path immediately.
+    # ONE transcript-source rule per modality:
+    #   document: vision OCR over the uploaded document files.
+    #   audio with transcription segments: assembled from those segments ONLY
+    #     (each transcribed + metered on arrival).
+    #   audio without segments: whole-file ASR.
+    # There is no cross-source fallback — a segment set that did not fully
+    # settle is an explicit failure (see transcript_from_segments!), never a
+    # silently substituted whole-file transcript.
     def ensure_transcript!
       return session.transcript if session.transcript.present?
 
-      if Scribe::Incremental.enabled? && session.transcript_segments.exists?
+      if session.modality_document?
+        transcript_from_documents!
+      elsif session.transcript_segments.exists?
         transcript_from_segments!
       else
-        # If segments were already transcribed AND metered (e.g. the incremental
-        # flag was flipped OFF mid-session), don't meter this whole-file pass
-        # again — the done segments are the billed quantity. Only meter when no
-        # segment was billed, so the kill-switch path never double-charges.
-        transcript_from_whole_file!(meter: !session.transcript_segments.where(status: "done").exists?)
+        transcript_from_whole_file!
       end
     rescue Llm::Error => e
       mark_asr_failure!(e)
@@ -98,13 +96,40 @@ module Scribe
       nil
     end
 
-    # Runs ASR once on the whole reassembled audio blob and persists a
-    # Transcript. The normal flag-off / no-segments path calls this with
-    # meter: true and meters :asr exactly as before. The segment-failure safety
-    # net (below) calls it with meter: false so it re-transcribes for
-    # COMPLETENESS ONLY without recording a second :asr usage_event — the
-    # already-metered segments are the billed quantity.
-    def transcript_from_whole_file!(meter: true)
+    # Runs vision OCR once over all attached documents, persists the extracted
+    # text as the Transcript, and meters the attempt as function: :ocr
+    # (dedupe "{session}:ocr"). Structuring then consumes the transcript text
+    # exactly as it does for audio.
+    def transcript_from_documents!
+      config = Llm::ConfigResolver.call(function: :ocr, account: session.account)
+
+      documents = session.document_files.map do |file|
+        {
+          data: file.blob.download,
+          content_type: file.blob.content_type,
+          filename: file.blob.filename.to_s
+        }
+      end
+      raise Llm::Error, "no documents attached to scribe session" if documents.empty?
+
+      stage = Scribe::OcrStage.new(config: config).call(
+        documents, pages: session.document_pages
+      )
+
+      transcript = Transcript.create!(
+        scribe_session: session,
+        text: stage.text,
+        language: session.language,
+        provider: stage.provider,
+        model: stage.model
+      )
+      meter(function: :ocr, stage: stage)
+      transcript
+    end
+
+    # Runs ASR once on the whole reassembled audio blob, persists a Transcript,
+    # and meters the attempt as function: :asr.
+    def transcript_from_whole_file!
       config = Llm::ConfigResolver.call(function: :asr, account: session.account)
 
       asr_result = with_audio do |audio_io|
@@ -124,36 +149,30 @@ module Scribe
 
       transcript = persist_transcript!(asr_result)
       # Metering is best-effort: a failure here must NOT fail the session once
-      # the transcript has persisted successfully. `meter(function: :asr, ...)`
-      # is a method call (parens) even though a boolean local `meter` shadows the
-      # bareword; `if meter` reads that local. Skipped on the safety-net path so
-      # the fallback never double-charges an already-metered segment set.
-      meter(function: :asr, stage: asr_result) if meter
+      # the transcript has persisted successfully.
+      meter(function: :asr, stage: asr_result)
       transcript
     end
 
-    # Builds the Transcript from the ordered segment texts, finishing any
-    # trailing segment inline first (through the segment job's SAME atomic claim,
-    # so an in-flight async job is never double-called). Falls back to a
-    # whole-file ASR pass ONLY when a segment is still failed after the inline
-    # finish (a coverage gap) — and that fallback is NOT re-metered, because each
-    # done segment was already metered by its own job.
+    # Builds the Transcript from the ordered segment texts. Every segment was
+    # transcribed + metered on arrival (or settled inline by
+    # ProcessScribeSessionJob before this runs), so assembly is pure
+    # concatenation and NEVER metered.
+    #
+    # COMPLETENESS: assembly requires every segment settled to done. Anything
+    # else is an EXPLICIT failure naming the unsettled seqs — concatenating just
+    # the done segments would silently drop clinical audio, and substituting a
+    # whole-file re-transcription would silently replace the transcript the
+    # clinician already saw live. The session finalizes :failed and a re-commit
+    # retries exactly the unsettled segments (their pending/failed status makes
+    # them claimable by TranscribeSegmentJob).
     def transcript_from_segments!
-      finish_incomplete_segments!
-      segments = session.transcript_segments.reload.order(:seq).to_a
+      segments = session.transcript_segments.order(:seq).to_a
 
-      # COMPLETENESS: assemble from the segments ONLY when every one settled to
-      # done. If any is still failed, or orphaned in 'transcribing' (a killed
-      # worker that outlived the inline wait, or an async job slower than the
-      # 15s poll), concatenating just the done segments would silently DROP that
-      # audio from the clinical transcript — so re-transcribe the whole file for
-      # full coverage. Meter that whole-file pass only when NO segment was
-      # already metered (a done segment is the billed quantity), so the fallback
-      # never double-charges yet a total-failure session is still billed once.
-      # The per-segment usage key and the whole-file key are distinct, so the
-      # unique index does NOT dedupe — the meter flag is the guard.
       unless segments.all?(&:status_done?)
-        return transcript_from_whole_file!(meter: segments.none?(&:status_done?))
+        unsettled = segments.reject(&:status_done?).map(&:seq).sort
+        raise Llm::Error,
+              "transcription incomplete for segment(s) #{unsettled.join(', ')}; re-commit to retry"
       end
 
       Transcript.create!(
@@ -164,40 +183,6 @@ module Scribe
         provider: segments.first&.provider,
         model: segments.first&.model
       )
-    end
-
-    # Finish every not-yet-done segment before assembly, without ever
-    # double-transcribing:
-    #   - transcribing: an async job already claimed it — WAIT for it to settle
-    #     rather than re-invoking the provider.
-    #   - pending/failed: transcribe inline via perform_now, which goes through
-    #     the SAME atomic claim, so if the async job wins the race this no-ops.
-    def finish_incomplete_segments!
-      session.transcript_segments.where.not(status: "done").find_each do |segment|
-        if segment.status_transcribing?
-          wait_for_segment(segment)
-        else
-          TranscribeSegmentJob.perform_now(segment.id)
-          # If an async job won the atomic claim a moment earlier, perform_now
-          # no-op'd (claim.zero?) and the row is now 'transcribing' — wait for
-          # that job to settle rather than leaving it unsettled for assembly.
-          wait_for_segment(segment) if segment.reload.status_transcribing?
-        end
-      end
-    end
-
-    # Bounded poll: give an in-flight async TranscribeSegmentJob time to reach a
-    # settled status (done/failed) before assembly. Never calls the provider.
-    def wait_for_segment(segment, timeout: 15.seconds, interval: 0.5)
-      deadline = Time.current + timeout
-      loop do
-        segment.reload
-        return segment unless segment.status_transcribing?
-        break if Time.current >= deadline
-
-        sleep interval
-      end
-      segment
     end
 
     def asr_failed?
@@ -219,7 +204,7 @@ module Scribe
     # every output failed and stop.
     def mark_asr_failure!(error)
       session.scribe_outputs.each do |output|
-        output.result_errors = Array(output.result_errors) + [{ message: error.message }]
+        output.result_errors = Array(output.result_errors) + [ { message: error.message } ]
         output.update!(status: :failure)
       end
       session.update!(status: :failed, error: { message: error.message })
@@ -246,7 +231,7 @@ module Scribe
         raise "unknown output_type=#{output.output_type.inspect}"
       end
     rescue StandardError => e
-      output.result_errors = Array(output.result_errors) + [{ message: e.message }]
+      output.result_errors = Array(output.result_errors) + [ { message: e.message } ]
       output.status = :failure
       output.save!
       nil
@@ -303,7 +288,7 @@ module Scribe
 
       stage = Scribe::StructuringStage.new(
         config: config,
-        fields: [note_field],
+        fields: [ note_field ],
         context: {},
         system_prompt: system_prompt
       ).call(transcript.text)

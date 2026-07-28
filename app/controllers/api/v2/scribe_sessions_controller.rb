@@ -10,10 +10,6 @@ module Api
       # session MAX_AUDIO_BYTES: a browser streams many small parts, and a single
       # oversized part is a client bug, not a legitimate upload.
       MAX_CHUNK_BYTES = 8.megabytes
-      # Minimum credit an account must hold to open a realtime session (a rough
-      # floor for a ~10-min operator-billed OpenAI realtime session; realtime is
-      # not per-session metered). Accounts with no AccountCredit row are unlimited.
-      REALTIME_MIN_CREDIT = 0.10
 
       # Account-wide surfaces stay account-token only; a scoped session token can
       # never mint tokens, create sessions, or list the account's sessions.
@@ -54,6 +50,7 @@ module Api
         session = find_session
         return unless session
         return if reject_expired(session)
+        return if reject_wrong_modality(session, "audio")
 
         # Only accept audio while the session is still open for upload. Without
         # this, a POST /audio after commit resets status to "uploading" (below),
@@ -119,6 +116,7 @@ module Api
         session = find_session
         return unless session
         return if reject_expired(session)
+        return if reject_wrong_modality(session, "audio")
 
         seq = params.require(:seq).to_i
         upload = params.require(:chunk)
@@ -178,76 +176,6 @@ module Api
         }, status: :ok
       end
 
-      # GET /api/v2/scribe_sessions/:id/live_form
-      #
-      # Structures the growing LIVE transcript for this session's form outputs so
-      # a client can pre-fill the form DURING recording, before commit. Returns
-      # { structured_data: { key => value } } merged across every form output.
-      #
-      # Gated behind the live-form flag: when OFF this returns an empty object
-      # (200) rather than 404, so a polling client degrades to "no pre-fill"
-      # instead of erroring. The authoritative, metered fill still happens once
-      # at commit (Scribe::Orchestrator); these interim passes are NOT persisted
-      # or metered, so a broke account is credit-gated here to bound the extra
-      # (operator-billed) LLM cost a poller could run up.
-      def live_form
-        session = find_session
-        return unless session
-        return if reject_expired(session)
-
-        structured =
-          if Scribe::Incremental.live_form_enabled? && Metering::QuotaGuard.affordable?(account: session.account)
-            Scribe::LiveStructurer.new(session).call(session.live_transcript)
-          else
-            {}
-          end
-
-        render json: { structured_data: structured }, status: :ok
-      end
-
-      # POST /api/v2/scribe_sessions/:id/realtime_token
-      #
-      # Mints a short-lived ephemeral token the BROWSER uses to connect directly
-      # to the realtime provider (OpenAI) for live transcription — the account
-      # key never reaches the client. Realtime is a live overlay; the
-      # authoritative transcript still comes from the commit pipeline. Gated
-      # behind SCRIBE_REALTIME: when OFF the surface does not exist (404).
-      def realtime_token
-        unless Scribe::Realtime.enabled?
-          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
-          return
-        end
-
-        session = find_session
-        return unless session
-        return if reject_expired(session)
-
-        # Each mint opens a ~10-min OpenAI realtime session billed to the
-        # operator's key with no per-session metering (the browser streams
-        # directly). Hard-block accounts with no credit so a session token can't
-        # turn realtime minting into an unbounded cost channel.
-        unless Metering::QuotaGuard.affordable?(account: session.account, estimate: REALTIME_MIN_CREDIT)
-          render_error(
-            code: "insufficient_credit",
-            message: "Account has insufficient credit for realtime transcription",
-            status: :payment_required
-          )
-          return
-        end
-
-        result = Scribe::RealtimeToken.call(session)
-        render json: {
-          provider: result.provider,
-          token: result.token,
-          expires_at: result.expires_at,
-          url: result.url,
-          model: result.model,
-          session: result.session
-        }, status: :created
-      rescue Llm::Error => e
-        render_error(code: "realtime_unavailable", message: e.message, status: :unprocessable_entity)
-      end
-
       # POST /api/v2/scribe_sessions/:id/audio/segments
       #
       # Accepts one STANDALONE, independently-decodable transcription segment: a
@@ -255,18 +183,12 @@ module Api
       # TranscribeSegmentJob through the same provider ASR seam, and the final
       # transcript is assembled from the ordered segment texts at commit. This is
       # a SEPARATE stream from the storage `audio/chunks` upload and is NOT
-      # counted against the 25MB storage cap — dual-upload doubles audio bytes by
-      # design. Re-POSTing a seq is idempotent. Gated behind the incremental
-      # feature flag: when OFF the surface simply does not exist (404).
+      # counted against the 25MB storage cap. Re-POSTing a seq is idempotent.
       def audio_segments
-        unless Scribe::Incremental.enabled?
-          render_error(code: "session_not_found", message: "Scribe session not found", status: :not_found)
-          return
-        end
-
         session = find_session
         return unless session
         return if reject_expired(session)
+        return if reject_wrong_modality(session, "audio")
 
         seq = params.require(:seq).to_i
         upload = params.require(:segment)
@@ -315,20 +237,108 @@ module Api
         render json: { received: seq }, status: :ok
       end
 
+      # POST /api/v2/scribe_sessions/:id/documents
+      #
+      # Uploads one lab-report document (PDF or image) to a document-modality
+      # session. Pages are counted here at upload time (pdf-reader; an image is
+      # one page) so a bad or oversized document is a clean 4xx now, never a
+      # 500 at commit, and the running document_pages total backs both the page
+      # cap and per-page metering.
+      def documents
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+        return if reject_wrong_modality(session, "document")
+
+        unless session.created? || session.uploading?
+          render_error(
+            code: "validation_error",
+            message: "documents cannot be uploaded from status #{session.status}",
+            status: :conflict
+          )
+          return
+        end
+
+        upload = params[:document]
+        if upload.blank?
+          render_error(code: "validation_error", message: "document file is required", status: :unprocessable_entity)
+          return
+        end
+        content_type = base_audio_type(upload.content_type)
+        unless ScribeSession::ALLOWED_DOCUMENT_TYPES.include?(content_type)
+          render_error(
+            code: "validation_error",
+            message: "unsupported document content type: #{upload.content_type}",
+            status: :unprocessable_entity
+          )
+          return
+        end
+        if upload.size.to_i > ScribeSession::MAX_DOCUMENT_FILE_BYTES
+          render_error(code: "validation_error", message: "document too large", status: :unprocessable_entity)
+          return
+        end
+        existing_bytes = session.document_files.sum { |f| f.blob&.byte_size.to_i }
+        if existing_bytes + upload.size.to_i > ScribeSession::MAX_DOCUMENT_BYTES
+          render_error(
+            code: "document_upload_failed",
+            message: "total documents exceed #{ScribeSession::MAX_DOCUMENT_BYTES} bytes",
+            status: :unprocessable_entity
+          )
+          return
+        end
+
+        pages = count_pages(upload, content_type)
+        if pages.nil?
+          render_error(
+            code: "validation_error",
+            message: "document could not be read (encrypted or malformed PDF?)",
+            status: :unprocessable_entity
+          )
+          return
+        end
+        if session.document_pages + pages > ScribeSession::MAX_DOCUMENT_PAGES
+          render_error(
+            code: "document_upload_failed",
+            message: "total pages exceed #{ScribeSession::MAX_DOCUMENT_PAGES}",
+            status: :unprocessable_entity
+          )
+          return
+        end
+
+        session.document_files.attach(
+          io: upload.tempfile.tap(&:rewind),
+          filename: upload.original_filename,
+          content_type: content_type
+        )
+        session.document_pages += pages
+        session.status = "uploading" if session.created?
+        session.save!
+
+        render json: { id: session.id, status: session.status, pages: session.document_pages }, status: :ok
+      end
+
       # POST /api/v2/scribe_sessions/:id/commit
       def commit
         session = find_session
         return unless session
         return if reject_expired(session)
 
-        # A committable session must have SOME audio: either a single-shot blob or at
-        # least one uploaded chunk. Chunk reassembly is deferred to the processing job
-        # (Scribe::AudioSource) so the audio content is read exactly once on the way to
-        # ASR — the job assembles and transcribes from a single tempfile rather than
-        # assembling here and re-downloading the blob for ASR. This guard sits BEFORE the
-        # atomic claim and OUTSIDE with_idempotency so a no-audio commit is a plain,
-        # retryable 422 and never a cached response.
-        if session.audio_files.blank? && !session.audio_chunks.exists?
+        # A committable session must have SOME source content, by modality:
+        # audio -> a single-shot blob, at least one uploaded chunk, or at least
+        # one transcription segment (a segments-only client needs no parallel
+        # storage stream); document -> at least one uploaded document. This
+        # guard sits BEFORE the atomic claim and OUTSIDE with_idempotency so an
+        # empty commit is a plain, retryable 422 and never a cached response.
+        if session.modality_document?
+          unless session.document_files.attached?
+            render_error(
+              code: "document_upload_failed",
+              message: "No documents uploaded for this session",
+              status: :unprocessable_entity
+            )
+            return
+          end
+        elsif session.audio_files.blank? && !session.audio_chunks.exists? && !session.transcript_segments.exists?
           render_error(
             code: "audio_upload_failed",
             message: "No audio uploaded for this session",
@@ -368,10 +378,31 @@ module Api
           # (the global handler renders a sanitized 500; the session is
           # re-committable).
           begin
+            estimate = commit_estimate(session)
+
+            # Usage-limit admission gate (per-user daily caps, org budgets, ...)
+            # — distinct from the credit ledger below so clients can message
+            # "limit reached" differently from "out of credit".
+            limit_check = Metering::LimitGuard.check(
+              account: session.account,
+              user: session.user,
+              estimated_cost: estimate
+            )
+            unless limit_check.ok?
+              revert_commit_claim(session, original_status)
+              violation = limit_check.violation.limit
+              render_error(
+                code: "usage_limit_exceeded",
+                message: "#{violation.period.capitalize} #{violation.metric} limit reached for this #{violation.scope == 'per_user' ? 'user' : 'account'}",
+                status: :payment_required
+              )
+              next
+            end
+
             # Meter against the session's own account. For a scoped session token
             # current_account is nil, so sourcing it from the session keeps the
             # quota hold correct without widening the token's reach.
-            token = Metering::QuotaGuard.hold!(account: session.account, estimate: commit_estimate(session))
+            token = Metering::QuotaGuard.hold!(account: session.account, estimate: estimate)
             unless token.ok?
               revert_commit_claim(session, original_status)
               render_error(
@@ -433,8 +464,38 @@ module Api
       # Floor so the estimate is always positive: any account with a zero or
       # negative balance is rejected even when the measured duration rounds to ~0.
       COMMIT_ESTIMATE_MIN_MINUTES = 1.0
+      # Coarse per-page rate for the document commit hold (vision OCR +
+      # structuring); same conservative-estimate philosophy as the audio rate.
+      COMMIT_ESTIMATE_RATE_PER_PAGE = 0.01
 
       private
+
+      # Renders a 409 and returns true when the session's modality does not
+      # match the upload surface (audio uploads to a document session or vice
+      # versa), so callers can guard with `return if reject_wrong_modality(...)`.
+      def reject_wrong_modality(session, expected)
+        return false if session.modality == expected
+
+        render_error(
+          code: "validation_error",
+          message: "this endpoint requires a #{expected} session (modality is #{session.modality})",
+          status: :conflict
+        )
+        true
+      end
+
+      # Page count for one uploaded document: pdf-reader for PDFs (nil when the
+      # PDF is encrypted/unparseable — the caller 422s), 1 for images.
+      def count_pages(upload, content_type)
+        return 1 unless content_type == "application/pdf"
+
+        upload.tempfile.rewind
+        count = PDF::Reader.new(upload.tempfile).page_count
+        upload.tempfile.rewind
+        count.positive? ? count : nil
+      rescue StandardError
+        nil
+      end
 
       # Undo a won commit claim (processing -> its prior committable status).
       # update_all bypasses dirty-tracking so the revert always writes, even when
@@ -448,14 +509,24 @@ module Api
       # settled at deduct!; this only needs to be positive and roughly
       # proportional to the audio length so a broke account is hard-blocked.
       def commit_estimate(session)
+        if session.modality_document?
+          pages = [ session.document_pages, 1 ].max
+          return (pages * COMMIT_ESTIMATE_RATE_PER_PAGE).round(6)
+        end
+
         blob = session.audio_files.first
         seconds =
           if blob
             Scribe::AudioDuration.for_blob(blob).seconds.to_f
-          else
+          elsif session.audio_chunks.exists?
             chunk_bytes = session.audio_chunks.with_attached_data
                                  .sum { |c| c.data.blob&.byte_size.to_i }
             chunk_bytes / Scribe::AudioDuration::ESTIMATE_BYTES_PER_SECOND
+          else
+            # Segments-only session: measured durations exist for every already-
+            # transcribed segment; unsettled ones contribute 0 and the minute
+            # floor below keeps the estimate positive.
+            session.transcript_segments.sum(:duration_seconds).to_f
           end
         minutes = [ seconds / 60.0, COMMIT_ESTIMATE_MIN_MINUTES ].max
         (minutes * COMMIT_ESTIMATE_RATE_PER_MINUTE).round(6)
@@ -524,6 +595,7 @@ module Api
           api_token: current_api_token,
           user: current_api_token.user,
           status: "created",
+          modality: create_params[:modality].presence || "audio",
           language: create_params[:language_hint],
           mode: create_params[:mode].presence || "consultation",
           callback_url: create_params[:callback_url],
@@ -615,7 +687,7 @@ module Api
 
       def create_params
         params.permit(
-          :language_hint, :mode, :callback_url,
+          :language_hint, :mode, :modality, :callback_url,
           outputs: [
             :type, :page_id, :template_ref, { context: {} },
             { fields: [ :key, :label, :type, :description, :minimum, :maximum, { enum: [] } ] }

@@ -14,8 +14,6 @@ gem "importmap-rails"
 gem "turbo-rails"
 # Hotwire's modest JavaScript framework [https://stimulus.hotwired.dev]
 gem "stimulus-rails"
-# Build JSON APIs with ease [https://github.com/rails/jbuilder]
-gem "jbuilder"
 # Load environment variables from .env file
 gem "dotenv-rails", "~> 3.1", groups: %i[development test]
 # Inline SVG
@@ -42,6 +40,8 @@ gem "json_schemer", "~> 2.3"
 gem "rack-attack", "~> 6.7"
 # Declarative content-type + size validations for Active Storage attachments
 gem "active_storage_validations", "~> 1.1"
+# PDF page counting at document upload time (OCR modality page caps + metering)
+gem "pdf-reader", "~> 2.12"
 
 
 

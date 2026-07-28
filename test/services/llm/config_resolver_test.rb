@@ -26,6 +26,32 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
     assert_equal "acc", cfg.api_model_id
   end
 
+  test "an ancestor assignment cascades to child and grandchild accounts" do
+    org = create(:account)
+    program = create(:account, parent: org)
+    facility = create(:account, parent: program)
+    create(:model_assignment, scope_type: "System", function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "sys"))
+    create(:model_assignment, scope_type: "Account", scope_id: org.id, function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "org-model"))
+
+    assert_equal "org-model", Llm::ConfigResolver.call(function: :structuring, account: facility).api_model_id
+    assert_equal "org-model", Llm::ConfigResolver.call(function: :structuring, account: program).api_model_id
+    assert_equal "org-model", Llm::ConfigResolver.call(function: :structuring, account: org).api_model_id
+  end
+
+  test "the nearest tree node wins: a child assignment overrides its parent's" do
+    org = create(:account)
+    facility = create(:account, parent: org)
+    create(:model_assignment, scope_type: "Account", scope_id: org.id, function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "org-model"))
+    create(:model_assignment, scope_type: "Account", scope_id: facility.id, function: "structuring",
+                              ai_model: create(:ai_model, api_model_id: "facility-model"))
+
+    assert_equal "facility-model", Llm::ConfigResolver.call(function: :structuring, account: facility).api_model_id
+    assert_equal "org-model", Llm::ConfigResolver.call(function: :structuring, account: org).api_model_id
+  end
+
   test "Page assignment overrides Account and System" do
     account = create(:account)
     page = create(:page)
@@ -82,7 +108,7 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
   test "api key is encrypted at rest" do
     provider = create(:ai_provider, api_key: "sk-plaintext-secret")
     raw = AiProvider.connection.select_value("SELECT api_key FROM ai_providers WHERE id = #{provider.id}")
-    refute_includes raw.to_s, "sk-plaintext-secret"
+    assert_not_includes raw.to_s, "sk-plaintext-secret"
     assert_equal "sk-plaintext-secret", AiProvider.find(provider.id).api_key
   end
 end
