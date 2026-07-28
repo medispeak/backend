@@ -20,7 +20,7 @@ module Admin
       @output = @session.scribe_outputs.create!(
         output_type: "form", status: "success",
         result: { "complaint" => "headache" },
-        inline_fields: [{ "key" => "complaint", "label" => "Complaint", "type" => "string" }]
+        inline_fields: [ { "key" => "complaint", "label" => "Complaint", "type" => "string" } ]
       )
       @segment = @session.transcript_segments.create!(
         seq: 0, status: "done", text: "patient has a headache",

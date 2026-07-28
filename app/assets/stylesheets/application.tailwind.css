@@ -1,9 +1,6 @@
 @tailwind base;
 @tailwind components;
 
-/* @import "./components/base.css"; */
-@import "./components/forms.css";
-
 body {
   display: flex;
   flex-direction: column;
@@ -25,13 +22,8 @@ a:focus {
   transform: none;
 }
 
-ul {
-  @apply list-disc list-inside;
-}
-
-ol {
-  @apply list-decimal list-inside;
-}
+/* No global list reset: application lists are layout (rows of records), not
+   prose, so markers are opted into per list rather than removed per list. */
 
 .table {
   @apply w-full;
@@ -249,4 +241,78 @@ button[disabled]        .when-enabled { display: none; }
 .nested-enter {
   opacity: 0;
   transform: translateY(-6px);
+}
+
+/* ---------------------------------------------------------------------------
+ * Application UI system
+ *
+ * Metering and clinical data are the subject, so numbers are set in tabular
+ * figures everywhere they appear and identifiers/transcripts in a mono face —
+ * a column of costs or durations should align, and a token prefix should be
+ * unmistakably machine data. Status carries information, not decoration: one
+ * hue per pipeline state, used consistently across every surface.
+ * ------------------------------------------------------------------------- */
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border border-gray-200 shadow-sm;
+  }
+  .card-pad {
+    @apply p-5 sm:p-6;
+  }
+  .card-header {
+    @apply px-5 sm:px-6 py-4 border-b border-gray-200;
+  }
+
+  .stat-value {
+    @apply text-2xl font-semibold text-gray-900 tabular-nums tracking-tight;
+  }
+  .stat-label {
+    @apply text-sm text-gray-500;
+  }
+  .num {
+    @apply tabular-nums;
+  }
+  .mono {
+    @apply font-mono text-[0.8125rem];
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset;
+  }
+  .badge-neutral  { @apply bg-gray-50 text-gray-700 ring-gray-500/20; }
+  .badge-progress { @apply bg-blue-50 text-blue-700 ring-blue-600/20; }
+  .badge-success  { @apply bg-emerald-50 text-emerald-800 ring-emerald-600/20; }
+  .badge-partial  { @apply bg-amber-50 text-amber-800 ring-amber-600/20; }
+  .badge-failed   { @apply bg-rose-50 text-rose-700 ring-rose-600/20; }
+
+  .field-label {
+    @apply block text-sm font-medium text-gray-700;
+  }
+  .field-input {
+    @apply block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm;
+  }
+  .field-hint {
+    @apply mt-1 text-xs text-gray-500;
+  }
+
+  .data-table {
+    @apply min-w-full divide-y divide-gray-200;
+  }
+  .data-table thead th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500;
+  }
+  .data-table tbody tr {
+    @apply hover:bg-gray-50;
+  }
+  .data-table tbody td {
+    @apply px-4 py-3 text-sm text-gray-700 align-middle;
+  }
+}
+
+/* Respect a reduced-motion preference across every transition we add. */
+@media (prefers-reduced-motion: reduce) {
+  [data-nested-item],
+  .nested-enter {
+    transition: none;
+  }
 }

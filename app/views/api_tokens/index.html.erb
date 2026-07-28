@@ -1,32 +1,72 @@
-<div class="container mx-auto px-4 py-8">
-  <h1 class="text-2xl font-bold mb-6">API Tokens</h1>
-  <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-    <table class="min-w-full divide-y divide-gray-200">
-      <thead class="bg-gray-50">
-        <tr>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Token</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires At</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Active</th>
-          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-        </tr>
-      </thead>
-      <tbody class="bg-white divide-y divide-gray-200">
-        <% @api_tokens.each do |token| %>
+<% content_for :title, "API keys" %>
+
+<%= render "shared/page_header",
+      title: "API keys",
+      subtitle: "An API key authenticates your app's server against the Medispeak API." do %>
+  <%= link_to "Create API key", new_api_token_path, class: "btn btn-primary" %>
+<% end %>
+
+<div class="card">
+  <% if @api_tokens.any? %>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
           <tr>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><%= token.name %></td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900"><%= token.token_prefix %>…</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><%= token.expires_at.strftime('%Y-%m-%d %H:%M:%S') %></td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><%= token.active ? 'Yes' : 'No' %></td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-              <%= button_to 'Revoke', api_token_path(token), method: :delete, data: { confirm: 'Are you sure you want to revoke this token?' }, class: 'text-red-600 hover:text-red-900' %>
-            </td>
+            <th scope="col">Name</th>
+            <th scope="col">Prefix</th>
+            <th scope="col">Created</th>
+            <th scope="col">Last used</th>
+            <th scope="col">Expires</th>
+            <th scope="col">Status</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
           </tr>
-        <% end %>
-      </tbody>
-    </table>
-  </div>
-  <div class="mt-8">
-    <%= link_to 'Generate New Token', new_api_token_path, class: 'inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500' %>
-  </div>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+          <% @api_tokens.each do |token| %>
+            <% state_label, state_badge = api_token_state(token) %>
+            <tr>
+              <td class="font-medium text-gray-900">
+                <%= link_to token.name.presence || "Untitled key", api_token_path(token), class: "no-underline hover:underline" %>
+              </td>
+              <td class="mono text-gray-600 whitespace-nowrap"><%= token.token_prefix %>…</td>
+              <td class="num text-gray-500 whitespace-nowrap"><%= friendly_time(token.created_at) %></td>
+              <td class="num text-gray-500 whitespace-nowrap">
+                <%= token.last_used_at.present? ? friendly_time(token.last_used_at) : "Never" %>
+              </td>
+              <%# expires_at is nullable: keys minted before it was required have
+                  none. Such a key does not live forever — ApiToken's `active`
+                  scope filters on `expires_at > now`, which NULL never matches —
+                  so it reads as "Not set" and its status badge says Expired. %>
+              <td class="num text-gray-500 whitespace-nowrap">
+                <%= token.expires_at.present? ? token.expires_at.strftime("%-d %b %Y") : "Not set" %>
+              </td>
+              <td><span class="badge <%= state_badge %>"><%= state_label %></span></td>
+              <td class="text-right">
+                <% if token.active? %>
+                  <%= button_to "Revoke key", api_token_path(token),
+                        method: :delete,
+                        class: "btn btn-small btn-danger btn-outline",
+                        form: {
+                          class: "inline-block",
+                          data: { turbo_confirm: "Revoke #{token.name.presence || 'this key'}? Any app still using it will stop working immediately." }
+                        } %>
+                <% else %>
+                  <span class="text-gray-400">—</span>
+                <% end %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  <% else %>
+    <%= render "shared/empty_state",
+          title: "No API keys yet",
+          body: "An API key authenticates your app's server against the Medispeak API. Create one to start sending audio and documents.",
+          cta: link_to("Create API key", new_api_token_path, class: "btn btn-primary") %>
+  <% end %>
 </div>
+
+<p class="mt-4 text-xs text-gray-500">
+  Keys are shown once, at creation. Revoking a key is immediate and cannot be undone — create a new key instead.
+</p>

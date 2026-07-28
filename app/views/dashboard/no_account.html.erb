@@ -1,0 +1,15 @@
+<% content_for :title, "Overview · Medispeak" %>
+
+<%#
+  A signed-in user whose account row was deleted (Account has_many :users,
+  dependent: :nullify). There is no tenant to report on, so the page states the
+  problem and names the only person who can fix it, rather than crashing or
+  showing an empty dashboard that implies the account is simply new.
+%>
+<%= render "shared/page_header", title: "Overview" %>
+
+<div class="card">
+  <%= render "shared/empty_state",
+        title: "Your login is not linked to an account",
+        body: "Consultations, usage and API keys all belong to an account, and this login has none. Ask an administrator to attach your user to one." %>
+</div>

@@ -1,30 +1,94 @@
-<%= content_for :title, "Supported Apps" %>
-<%= turbo_stream_from :templates %>
-<div class="container px-4 mx-auto my-8">
-  <div class="flex items-center justify-between mb-4">
-    <div>
-      <h1 class="h3">Templates</h1>
-      <div class="text-sm font-medium">
-        <span class="text-gray-500">Sort by:</span>
-        <%= sortable @templates, :title, "Title", class: "text-gray-700 mr-1" %>
-        <%= sortable @templates, :fqdn, "Fqdn", class: "text-gray-700 mr-1" %>
-        <%= sortable @templates, :autofill, "Autofill", class: "text-gray-700 mr-1" %>
+<% content_for :title, "Templates" %>
+
+<%= render "shared/page_header",
+      title: "Templates",
+      subtitle: "The forms the AI fills in from a consultation." do %>
+  <%= link_to "New template", new_template_path, class: "btn btn-primary" %>
+<% end %>
+
+<% if @templates.any? %>
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">
+              <% name_direction = (@sort == "name" && @direction == "asc") ? "desc" : "asc" %>
+              <%= link_to templates_path(sort: "name", direction: name_direction),
+                    class: "inline-flex items-center gap-1 hover:text-gray-900" do %>
+                Name
+                <% if @sort == "name" %>
+                  <span aria-hidden="true"><%= @direction == "asc" ? "↑" : "↓" %></span>
+                <% end %>
+              <% end %>
+            </th>
+            <th scope="col">Description</th>
+            <th scope="col" class="text-right">Pages</th>
+            <th scope="col" class="text-right">Fields</th>
+            <th scope="col">
+              <% created_direction = (@sort == "created_at" && @direction == "asc") ? "desc" : "asc" %>
+              <%= link_to templates_path(sort: "created_at", direction: created_direction),
+                    class: "inline-flex items-center gap-1 hover:text-gray-900" do %>
+                Created
+                <% if @sort == "created_at" %>
+                  <span aria-hidden="true"><%= @direction == "asc" ? "↑" : "↓" %></span>
+                <% end %>
+              <% end %>
+            </th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% @templates.each do |template| %>
+            <tr>
+              <td>
+                <div class="flex items-center gap-2">
+                  <%= link_to template.name, template_path(template),
+                        class: "font-medium text-gray-900 hover:text-blue-600" %>
+                  <% if template.archived? %>
+                    <span class="badge badge-neutral">Archived</span>
+                  <% end %>
+                </div>
+              </td>
+              <td class="max-w-md text-gray-500"><%= truncate(template.description, length: 90) %></td>
+              <td class="num text-right"><%= @page_counts.fetch(template.id, 0) %></td>
+              <td class="num text-right"><%= @field_counts.fetch(template.id, 0) %></td>
+              <td class="whitespace-nowrap text-gray-500"><%= friendly_time(template.created_at) %></td>
+              <td class="text-right whitespace-nowrap">
+                <%= link_to "View", template_path(template), class: "btn btn-white btn-small" %>
+                <% if policy(template).update? %>
+                  <%= link_to "Edit", edit_template_path(template), class: "btn btn-white btn-small" %>
+                <% end %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <% if @pagy.pages > 1 %>
+    <div class="mt-4 flex items-center justify-between text-sm text-gray-600">
+      <p class="num">Showing <%= @pagy.from %>–<%= @pagy.to %> of <%= @pagy.count %></p>
+      <div class="flex items-center gap-2">
+        <% if @pagy.prev %>
+          <%= link_to "Previous",
+                templates_path(sort: @sort, direction: @direction, page: @pagy.prev),
+                class: "btn btn-white btn-small" %>
+        <% end %>
+        <% if @pagy.next %>
+          <%= link_to "Next",
+                templates_path(sort: @sort, direction: @direction, page: @pagy.next),
+                class: "btn btn-white btn-small" %>
+        <% end %>
       </div>
     </div>
-    <%= link_to new_template_path,
-          class: "inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500" do %>
-      <span class="text-lg leading-none">+</span> New template
-    <% end %>
+  <% end %>
+<% else %>
+  <div class="card">
+    <%= render "shared/empty_state",
+          title: "No templates yet",
+          body: "A template describes the pages and fields the AI fills in after a consultation. Build your first one to start structuring notes.",
+          cta: link_to("New template", new_template_path, class: "btn btn-primary") %>
   </div>
-  <%= tag.div id: ("templates" if first_page?), class: "space-y-8" do %>
-    <%= render partial: "templates/index", collection: @templates, as: :template, cached: true %>
-    <div class="hidden only:flex flex-col items-center justify-between lg:flex-row">
-      <%= image_tag "empty.svg", class: "mb-4 lg:w-1/2" %>
-    </div>
-  <% end %>
-  <% if @pagy.pages > 1 %>
-    <div class="my-6 text-center">
-      <%== pagy_nav(@pagy) %>
-    </div>
-  <% end %>
-</div>
+<% end %>

@@ -15,6 +15,7 @@ class UserDashboard < Administrate::BaseDashboard
     reset_password_sent_at: Field::DateTime,
     reset_password_token: Field::String,
     admin: Field::Boolean,
+    account: Field::BelongsTo,
     created_at: Field::DateTime,
     updated_at: Field::DateTime
   }.freeze
@@ -36,6 +37,7 @@ class UserDashboard < Administrate::BaseDashboard
     id
     email
     admin
+    account
     created_at
     updated_at
   ].freeze
@@ -47,6 +49,7 @@ class UserDashboard < Administrate::BaseDashboard
     email
     password
     admin
+    account
   ].freeze
 
   # COLLECTION_FILTERS

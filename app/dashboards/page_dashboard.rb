@@ -13,7 +13,6 @@ class PageDashboard < Administrate::BaseDashboard
     name: Field::String,
     template: Field::BelongsTo,
     prompt: Field::String,
-    transcriptions: Field::HasMany,
     created_at: Field::DateTime,
     updated_at: Field::DateTime
   }.freeze
@@ -38,8 +37,6 @@ class PageDashboard < Administrate::BaseDashboard
     name
     prompt
     template
-    transcriptions
-    form_fields
     created_at
     updated_at
   ].freeze

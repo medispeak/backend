@@ -24,8 +24,6 @@
     <meta name="twitter:title" content="Medispeak: Revolutionizing Healthcare Communication">
     <meta name="twitter:description" content="Medispeak offers innovative solutions to streamline doctor-patient communication, ensuring better healthcare outcomes.">
     <meta name="twitter:image" content="<%= image_url("og.png") %>">
-    <%# Enable PWA manifest for installable apps (make sure to enable in config/routes.rb too!) %>
-    <%#= tag.link rel: "manifest", href: pwa_manifest_path(format: :json) %>
     <link rel="icon" href="/icon.png" type="image/png">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.png">
@@ -37,12 +35,12 @@
     <div class="main flex flex-col">
       <header>
         <%= render partial: "shared/flash" %>
-        <% unless @hide_navbar %>
-          <%= render partial: "shared/navbar" %>
-        <% end %>
+        <%= render partial: "shared/navbar" %>
       </header>
-      <main class="px-3 lg:px-0 h-full">
-        <%= yield %>
+      <main class="h-full">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <%= yield %>
+        </div>
       </main>
     </div>
   </body>

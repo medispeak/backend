@@ -1,0 +1,21 @@
+<%#
+  Shared shell for every authentication screen, so log in, sign up, and the
+  password flows read as one product rather than three generations of scaffold.
+  Usage: render "devise/shared/auth_card", title: "…", subtitle: "…" do … end
+%>
+<div class="mx-auto w-full max-w-md py-6">
+  <div class="text-center mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight text-gray-900"><%= title %></h1>
+    <% if local_assigns[:subtitle].present? %>
+      <p class="mt-1.5 text-sm text-gray-500"><%= subtitle %></p>
+    <% end %>
+  </div>
+
+  <div class="card card-pad">
+    <%= yield %>
+  </div>
+
+  <div class="mt-5 text-center text-sm text-gray-500">
+    <%= render "devise/shared/links" %>
+  </div>
+</div>

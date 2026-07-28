@@ -17,8 +17,6 @@ This is the backend API for Medispeak, a tool that provides seamless transcripti
   poll or receive a signed completion webhook. One usage event per provider
   attempt, priced from versioned token/per-minute price tables and settled
   against a credit ledger. Per-account rate limiting.
-- **Legacy v1 API** — the original synchronous two-call flow, reimplemented on the
-  same engine for backward compatibility.
 - **Template management** for various medical forms across EMR systems.
 
 ## Tech Stack
@@ -40,8 +38,6 @@ For a containerized environment, detailed instructions are available in our [Dev
 
 - [v2 API reference](docs/api/v2.md) — the async, metered public API: auth, session
   lifecycle, endpoints, idempotency, rate limiting, and signed webhooks.
-- [v1 API reference](docs/api/v1.md) — the legacy synchronous two-call flow served
-  by the same engine.
 - [Configuration guide](docs/configuration.md) — providers, models, and
   assignments; the page → account → system → ENV resolution; running your own
   model; and mix-and-match setups.

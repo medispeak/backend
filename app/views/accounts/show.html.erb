@@ -1,0 +1,211 @@
+<% content_for :title, "Account · #{@account.name}" %>
+
+<%= render "shared/page_header",
+      title: "Account",
+      subtitle: "Settings, organisation, team and spending caps." do %>
+  <%= link_to "Edit account", edit_account_path, class: "btn btn-white btn-small" %>
+<% end %>
+
+<div class="space-y-6">
+  <%# ---------------------------------------------------------------- Summary %>
+  <section class="card">
+    <div class="card-header flex items-center justify-between gap-3">
+      <h2 class="text-base font-semibold text-gray-900">Summary</h2>
+      <span class="badge <%= @account.status == "active" ? "badge-success" : "badge-neutral" %>">
+        <%= @account.status.humanize %>
+      </span>
+    </div>
+
+    <div class="card-pad">
+      <dl class="grid gap-6 sm:grid-cols-2">
+        <div>
+          <dt class="stat-label">Name</dt>
+          <dd class="mt-1 text-sm font-medium text-gray-900"><%= @account.name %></dd>
+        </div>
+
+        <div>
+          <dt class="stat-label">Credit balance</dt>
+          <dd class="mt-1">
+            <% if @credit %>
+              <span class="stat-value"><%= format_cost(@credit.balance) %></span>
+              <% if @credit.credit_limit.present? %>
+                <p class="field-hint">Spending may run to <%= format_cost(@credit.credit_limit) %> beyond the balance.</p>
+              <% end %>
+            <% else %>
+              <p class="text-sm text-gray-700">No prepaid balance is held for this account, so spending is not capped by credit.</p>
+            <% end %>
+          </dd>
+        </div>
+
+        <div class="sm:col-span-2">
+          <dt class="stat-label">Default callback URL</dt>
+          <dd class="mt-1">
+            <% if @account.default_callback_url.present? %>
+              <span class="mono break-all text-gray-700"><%= @account.default_callback_url %></span>
+            <% else %>
+              <span class="text-sm text-gray-500">Not set.</span>
+            <% end %>
+            <p class="field-hint">Stored for this account. Each session sends results to the callback URL given when it is created.</p>
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <%# --------------------------------------------------------- Organisation %>
+  <section class="card">
+    <div class="card-header">
+      <h2 class="text-base font-semibold text-gray-900">Organisation</h2>
+    </div>
+
+    <div class="card-pad">
+      <% if @lineage.size == 1 && @children.empty? %>
+        <p class="text-sm text-gray-700">
+          This is a standalone account: it has no parent organisation and no sub-accounts.
+        </p>
+      <% else %>
+        <p class="stat-label">Reporting line</p>
+        <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <% @lineage.each_with_index do |node, index| %>
+            <% if index.positive? %>
+              <span class="text-gray-300" aria-hidden="true">&rsaquo;</span>
+            <% end %>
+            <span class="<%= node.id == @account.id ? "font-semibold text-gray-900" : "text-gray-500" %>">
+              <%= node.name %>
+            </span>
+          <% end %>
+        </div>
+        <p class="field-hint">Spending caps set anywhere above this account also apply to it.</p>
+
+        <% if @children.any? %>
+          <div class="mt-6">
+            <p class="stat-label">Sub-accounts</p>
+            <div class="mt-2 border-t border-gray-100 divide-y divide-gray-100">
+              <% @children.each do |child| %>
+                <div class="flex items-center justify-between gap-3 py-2.5">
+                  <span class="text-sm text-gray-900"><%= child.name %></span>
+                  <span class="badge <%= child.status == "active" ? "badge-success" : "badge-neutral" %>">
+                    <%= child.status.humanize %>
+                  </span>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+  </section>
+
+  <%# ------------------------------------------------------------------ Team %>
+  <section class="card">
+    <div class="card-header">
+      <h2 class="text-base font-semibold text-gray-900">Team</h2>
+      <p class="mt-1 text-sm text-gray-500">People who can sign in to this account.</p>
+    </div>
+
+    <% if @members.any? %>
+      <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Email</th>
+              <th scope="col">Role</th>
+              <th scope="col">Joined</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @members.each do |member| %>
+              <tr>
+                <td class="mono text-gray-900"><%= member.email %></td>
+                <td>
+                  <% if member.admin? %>
+                    <span class="badge badge-progress">Admin</span>
+                  <% else %>
+                    <span class="text-gray-500">Member</span>
+                  <% end %>
+                </td>
+                <td class="num text-gray-500"><%= friendly_time(member.created_at) %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% else %>
+      <%= render "shared/empty_state",
+            title: "No one is on this account",
+            body: "Nobody can sign in to this account yet." %>
+    <% end %>
+  </section>
+
+  <%# --------------------------------------------------------- Spending caps %>
+  <% if policy(current_account).manage_limits? %>
+    <section class="card">
+      <div class="card-header">
+        <h2 class="text-base font-semibold text-gray-900">Spending caps</h2>
+        <p class="mt-1 text-sm text-gray-500">
+          A cap stops new work once the account passes it in the current period.
+        </p>
+      </div>
+
+      <% if @usage_limits.any? || @inherited_limits.any? %>
+        <div class="overflow-x-auto">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Applies to</th>
+                <th scope="col">Metric</th>
+                <th scope="col">Period</th>
+                <th scope="col" class="text-right">Limit</th>
+                <th scope="col">Set at</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% @usage_limits.each do |limit| %>
+                <tr>
+                  <td class="text-gray-900"><%= usage_limit_scope_label(limit.scope) %></td>
+                  <td><%= limit.metric.humanize %></td>
+                  <td><%= limit.period.humanize %></td>
+                  <td class="num text-right font-medium text-gray-900">
+                    <%= limit.metric == "cost" ? format_cost(limit.limit_value) : format_tokens(limit.limit_value) %>
+                  </td>
+                  <td class="text-gray-500">This account</td>
+                  <td class="text-right">
+                    <%= button_to "Remove", account_usage_limit_path(limit),
+                          method: :delete,
+                          class: "btn btn-small btn-danger btn-outline",
+                          form: {
+                            class: "inline-block",
+                            data: { turbo_confirm: "Remove this cap? Usage will no longer stop at this limit." }
+                          } %>
+                  </td>
+                </tr>
+              <% end %>
+
+              <% @inherited_limits.each do |limit| %>
+                <tr class="bg-gray-50/50">
+                  <td class="text-gray-900"><%= usage_limit_scope_label(limit.scope) %></td>
+                  <td><%= limit.metric.humanize %></td>
+                  <td><%= limit.period.humanize %></td>
+                  <td class="num text-right font-medium text-gray-900">
+                    <%= limit.metric == "cost" ? format_cost(limit.limit_value) : format_tokens(limit.limit_value) %>
+                  </td>
+                  <td class="text-gray-500"><%= limit.account.name %></td>
+                  <td class="text-right text-xs text-gray-400">Inherited</td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      <% else %>
+        <%= render "shared/empty_state",
+              title: "No spending caps",
+              body: "Nothing limits what this account can spend. Add a cap below to stop runaway usage." %>
+      <% end %>
+
+      <div class="card-pad border-t border-gray-200">
+        <%= render "accounts/usage_limit_form", usage_limit: @usage_limit %>
+      </div>
+    </section>
+  <% end %>
+</div>

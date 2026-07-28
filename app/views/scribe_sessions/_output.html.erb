@@ -1,0 +1,130 @@
+<%#
+  One scribe output. `result` is a plain jsonb Hash whose shape follows the
+  output type, so each type gets the reading layout it deserves: a form becomes
+  a definition list, a note becomes prose, a transcript output is a pure echo
+  of the transcript above.
+
+  Leaf formatting lives in one lambda so a boolean reads the same wherever it
+  appears — a clinician should never have to interpret "false".
+%>
+<% scalar = ->(value) do
+     case value
+     when true then "Yes"
+     when false then "No"
+     when nil then "—"
+     when Numeric then number_with_delimiter(value)
+     else value.to_s.presence || "—"
+     end
+   end %>
+
+<% result = output.result.is_a?(Hash) ? output.result : {} %>
+<% errors = Array.wrap(output.result_errors) %>
+
+<article class="card">
+  <div class="card-header flex flex-wrap items-center justify-between gap-2">
+    <div class="min-w-0">
+      <h3 class="text-sm font-semibold text-gray-900"><%= output.output_type.to_s.humanize %></h3>
+      <%# Where the shape came from: a template page, ad-hoc fields, or a custom prompt. %>
+      <% source = output.page&.name.presence ||
+                  ("Inline fields" if output.inline_fields.present?) ||
+                  ("Custom prompt" if output.template_ref.present?) %>
+      <% if source.present? %>
+        <p class="mt-0.5 text-xs text-gray-500"><%= source %></p>
+      <% end %>
+    </div>
+    <%= status_badge(output.status, kind: :output) %>
+  </div>
+
+  <div class="card-pad">
+    <% if output.transcript? %>
+      <p class="text-sm text-gray-500">
+        This output mirrors the transcript above — the same text and language, returned to your app under this output.
+      </p>
+
+    <% elsif output.note? %>
+      <% note = result["note"] %>
+      <% if note.present? %>
+        <div class="max-w-prose whitespace-pre-wrap text-sm leading-6 text-gray-800"><%= note %></div>
+      <% else %>
+        <p class="text-sm text-gray-500">No note was produced.</p>
+      <% end %>
+
+    <% elsif result.any? %>
+      <dl class="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+        <% result.each do |key, value| %>
+          <div class="min-w-0">
+            <dt class="text-xs font-medium uppercase tracking-wider text-gray-400"><%= key.to_s.humanize %></dt>
+            <dd class="mt-1 break-words text-sm text-gray-900">
+              <% if value.is_a?(Hash) %>
+                <% if value.empty? %>
+                  <span class="text-gray-400">—</span>
+                <% else %>
+                  <dl class="space-y-0.5">
+                    <% value.each do |nested_key, nested_value| %>
+                      <div class="flex flex-wrap gap-x-2">
+                        <dt class="text-gray-500"><%= nested_key.to_s.humanize %>:</dt>
+                        <dd class="text-gray-900">
+                          <%= nested_value.is_a?(Array) ? nested_value.map { |item| scalar.call(item) }.join(", ") : scalar.call(nested_value) %>
+                        </dd>
+                      </div>
+                    <% end %>
+                  </dl>
+                <% end %>
+              <% elsif value.is_a?(Array) %>
+                <% if value.empty? %>
+                  <span class="text-gray-400">—</span>
+                <% else %>
+                  <ul class="list-inside list-disc space-y-0.5">
+                    <% value.each do |item| %>
+                      <li>
+                        <% if item.is_a?(Hash) %>
+                          <%= item.map { |k, v| "#{k.to_s.humanize}: #{scalar.call(v)}" }.join(" · ") %>
+                        <% else %>
+                          <%= scalar.call(item) %>
+                        <% end %>
+                      </li>
+                    <% end %>
+                  </ul>
+                <% end %>
+              <% else %>
+                <%= scalar.call(value) %>
+              <% end %>
+            </dd>
+          </div>
+        <% end %>
+      </dl>
+
+    <% else %>
+      <p class="text-sm text-gray-500">
+        <%= output.status_pending? ? "Waiting to be structured." : "No fields were returned." %>
+      </p>
+    <% end %>
+
+    <% if errors.any? %>
+      <%#
+        Errors are shown in full rather than summarised: a partial output is
+        only safe to use once you know exactly which field failed validation.
+      %>
+      <div class="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+        <p class="text-xs font-semibold uppercase tracking-wider text-rose-700">
+          <%= pluralize(errors.size, "problem") %>
+        </p>
+        <ul class="mt-2 space-y-1 text-sm text-rose-800 list-disc list-inside">
+          <% errors.each do |error| %>
+            <li>
+              <% if error.is_a?(Hash) %>
+                <% pointer = error["pointer"].presence || error[:pointer].presence %>
+                <% if pointer.present? %>
+                  <span class="mono text-rose-700"><%= pointer %></span>
+                <% end %>
+                <%= error["message"].presence || error[:message].presence || error.to_json %>
+              <% else %>
+                <%= error %>
+              <% end %>
+            </li>
+          <% end %>
+        </ul>
+      </div>
+    <% end %>
+  </div>
+</article>

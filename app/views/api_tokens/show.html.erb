@@ -1,38 +1,109 @@
-<div class="container mx-auto px-4 py-8">
-  <h1 class="text-2xl font-bold mb-6">API Token Details</h1>
-  <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-    <div class="px-4 py-5 sm:px-6">
-      <h3 class="text-lg leading-6 font-medium text-gray-900">Token Information</h3>
+<% content_for :title, @api_token.name.presence || "API key" %>
+<% state_label, state_badge = api_token_state(@api_token) %>
+<%# Reveal-once: set by the controller only on the redirect straight after
+    create, and only when the flashed key belongs to this record. %>
+
+<%= render "shared/page_header",
+      title: @api_token.name.presence || "API key",
+      subtitle: "Authenticates your app's server against the Medispeak API." do %>
+  <%= link_to "Back to API keys", api_tokens_path, class: "btn btn-white" %>
+  <% if @api_token.active? %>
+    <%= button_to "Revoke key", api_token_path(@api_token),
+          method: :delete,
+          class: "btn btn-danger btn-outline",
+          form: {
+            data: { turbo_confirm: "Revoke #{@api_token.name.presence || 'this key'}? Any app still using it will stop working immediately." }
+          } %>
+  <% end %>
+<% end %>
+
+<% if @raw_token.present? %>
+  <div class="card card-pad border-amber-300 bg-amber-50 mb-6" data-controller="clipboard">
+    <h2 class="text-base font-semibold text-amber-900">Copy your key now</h2>
+    <p class="mt-1 text-sm text-amber-900">
+      This is the only time the key will be shown. Medispeak stores a hash of it, not the key itself —
+      if you lose it, revoke this key and create a new one.
+    </p>
+
+    <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <code class="mono flex-1 break-all rounded-lg border border-amber-300 bg-white px-3 py-2 text-gray-900"
+            data-clipboard-target="source"><%= @raw_token %></code>
+      <button type="button"
+              class="btn btn-primary shrink-0"
+              aria-live="polite"
+              data-clipboard-target="button"
+              data-action="clipboard#copy">Copy key</button>
     </div>
-    <div class="border-t border-gray-200">
-      <dl>
-        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-          <dt class="text-sm font-medium text-gray-500">Name</dt>
-          <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2"><%= @api_token.name %></dd>
-        </div>
-        <div class="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-          <dt class="text-sm font-medium text-gray-500">Token</dt>
-          <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-            <% if flash[:raw_token].present? %>
-              <span class="font-mono break-all"><%= flash[:raw_token] %></span>
-              <p class="mt-1 text-xs text-red-600">Copy this token now — it will not be shown again.</p>
-            <% else %>
-              <span class="font-mono"><%= @api_token.token_prefix %>…</span>
-            <% end %>
-          </dd>
-        </div>
-        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-          <dt class="text-sm font-medium text-gray-500">Expires At</dt>
-          <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2"><%= @api_token.expires_at.strftime('%Y-%m-%d %H:%M:%S') %></dd>
-        </div>
-        <div class="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-          <dt class="text-sm font-medium text-gray-500">Active</dt>
-          <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2"><%= @api_token.active ? 'Yes' : 'No' %></dd>
-        </div>
-      </dl>
+
+    <p class="mt-3 text-xs text-amber-900">
+      Send it as <span class="mono">Authorization: Bearer &lt;key&gt;</span> from your server. Never from a browser.
+    </p>
+  </div>
+<% end %>
+
+<div class="card">
+  <div class="card-header flex items-center justify-between gap-3">
+    <h2 class="text-base font-semibold text-gray-900">Key details</h2>
+    <span class="badge <%= state_badge %>"><%= state_label %></span>
+  </div>
+
+  <dl class="divide-y divide-gray-200">
+    <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+      <dt class="text-sm text-gray-500">Name</dt>
+      <dd class="mt-1 sm:mt-0 sm:col-span-2 text-sm text-gray-900"><%= @api_token.name.presence || "—" %></dd>
     </div>
-  </div>
-  <div class="mt-8">
-    <%= link_to 'Back to API Tokens', api_tokens_path, class: 'inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500' %>
-  </div>
+
+    <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+      <dt class="text-sm text-gray-500">Prefix</dt>
+      <dd class="mt-1 sm:mt-0 sm:col-span-2">
+        <span class="mono text-gray-900"><%= @api_token.token_prefix %>…</span>
+        <span class="ml-2 text-xs text-gray-500">Use this to identify the key in your logs.</span>
+      </dd>
+    </div>
+
+    <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+      <dt class="text-sm text-gray-500">Created</dt>
+      <dd class="mt-1 sm:mt-0 sm:col-span-2 num text-sm text-gray-900"><%= friendly_time(@api_token.created_at) %></dd>
+    </div>
+
+    <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+      <dt class="text-sm text-gray-500">Last used</dt>
+      <dd class="mt-1 sm:mt-0 sm:col-span-2 num text-sm text-gray-900">
+        <%= @api_token.last_used_at.present? ? friendly_time(@api_token.last_used_at) : "Never" %>
+      </dd>
+    </div>
+
+    <%# expires_at is nullable: keys minted before it was required have none.
+        A key with no expiry cannot authenticate at all (the `active` scope
+        filters on `expires_at > now`, which NULL never matches), so it is
+        neither "does not expire" nor usable — say so plainly. %>
+    <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+      <dt class="text-sm text-gray-500">Expires</dt>
+      <dd class="mt-1 sm:mt-0 sm:col-span-2 num text-sm text-gray-900">
+        <% if @api_token.expires_at.present? %>
+          <%= @api_token.expires_at.strftime("%-d %b %Y, %H:%M") %>
+        <% else %>
+          Not set
+          <span class="block text-xs text-gray-500">A key without an expiry cannot authenticate — create a new one.</span>
+        <% end %>
+      </dd>
+    </div>
+
+    <% if @api_token.scopes.present? %>
+      <div class="px-5 sm:px-6 py-4 sm:grid sm:grid-cols-3 sm:gap-4">
+        <dt class="text-sm text-gray-500">Scopes</dt>
+        <dd class="mt-1 sm:mt-0 sm:col-span-2 flex flex-wrap gap-1.5">
+          <% @api_token.scopes.each do |scope| %>
+            <span class="badge badge-neutral mono"><%= scope %></span>
+          <% end %>
+        </dd>
+      </div>
+    <% end %>
+  </dl>
 </div>
+
+<% if @raw_token.blank? %>
+  <p class="mt-4 text-xs text-gray-500">
+    The key itself is shown only once, when it is created. Only the prefix above is stored in readable form.
+  </p>
+<% end %>

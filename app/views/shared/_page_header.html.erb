@@ -1,0 +1,15 @@
+<%#
+  Page header: title, optional subtitle, and an actions slot.
+  Usage: render "shared/page_header", title: "Consultations", subtitle: "…" do … end
+%>
+<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
+  <div class="min-w-0">
+    <h1 class="text-2xl font-semibold tracking-tight text-gray-900"><%= title %></h1>
+    <% if local_assigns[:subtitle].present? %>
+      <p class="mt-1 text-sm text-gray-500"><%= subtitle %></p>
+    <% end %>
+  </div>
+  <% if block_given? %>
+    <div class="flex items-center gap-2 shrink-0"><%= yield %></div>
+  <% end %>
+</div>

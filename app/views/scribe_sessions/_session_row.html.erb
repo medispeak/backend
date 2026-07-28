@@ -1,0 +1,51 @@
+<%#
+  One row of the consultations table.
+
+  Every derived number is computed from the associations the controller
+  preloads (:scribe_outputs, :transcript, :usage_events), so a page of rows
+  costs no extra queries: `size` and block-form `sum`/`count` read the loaded
+  records instead of issuing SQL.
+%>
+<% outputs = scribe_session.scribe_outputs %>
+<% ready = outputs.count(&:status_success?) %>
+<%#
+  Settled charges only — the same rule the Usage page, the dashboard and the
+  v2 API all apply. A pending event is a reservation whose cost is recomputed
+  when it settles, and a failed one is never charged; counting either here
+  would show a bigger number than the account is ever billed.
+%>
+<% settled = scribe_session.usage_events.select(&:finalized?) %>
+<% cost = settled.sum { |event| event.cost || 0 } %>
+<tr>
+  <td>
+    <%= link_to "##{scribe_session.id}", scribe_session_path(scribe_session),
+          class: "mono font-medium text-gray-900 hover:text-blue-600" %>
+  </td>
+  <td class="whitespace-nowrap text-gray-500"><%= friendly_time(scribe_session.created_at) %></td>
+  <td><%= status_badge(scribe_session.status) %></td>
+  <td class="whitespace-nowrap"><%= scribe_session.modality.to_s.humanize %></td>
+  <td class="whitespace-nowrap text-gray-500"><%= scribe_session.mode.to_s.humanize %></td>
+  <td class="num text-right whitespace-nowrap">
+    <% if outputs.size.zero? %>
+      <span class="text-gray-400">—</span>
+    <% else %>
+      <%= ready %> of <%= outputs.size %> ready
+    <% end %>
+  </td>
+  <td class="num text-right whitespace-nowrap text-gray-500">
+    <%= format_duration(scribe_session.transcript&.duration_seconds) %>
+  </td>
+  <%#
+    A single session can legitimately cost a fraction of a cent. Rounding that
+    to $0.00 would read as "free", so say what it is instead — and a session
+    with nothing settled yet gets a dash rather than a $0.00 that would be read
+    as "this one was free".
+  %>
+  <td class="num text-right whitespace-nowrap">
+    <% if settled.empty? %>
+      <span class="text-gray-400">—</span>
+    <% else %>
+      <%= cost.positive? && cost < 0.005 ? "<$0.01" : format_cost(cost) %>
+    <% end %>
+  </td>
+</tr>

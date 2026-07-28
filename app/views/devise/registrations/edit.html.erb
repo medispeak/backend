@@ -1,43 +1,61 @@
-<h2>Edit <%= resource_name.to_s.humanize %></h2>
+<% content_for :title, "Your profile" %>
 
-<%= form_for(resource, as: resource_name, url: registration_path(resource_name), html: { method: :put }) do |f| %>
-  <%= render "devise/shared/error_messages", resource: resource %>
+<%= render "shared/page_header", title: "Your profile",
+           subtitle: "Update the email and password you sign in with." %>
 
-  <div class="field">
-    <%= f.label :email %><br />
-    <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-  </div>
+<div class="max-w-2xl space-y-6">
+  <div class="card card-pad">
+    <%= form_for(resource, as: resource_name, url: registration_path(resource_name),
+                 html: { method: :put, class: "space-y-4" }) do |f| %>
+      <%= render "devise/shared/error_messages", resource: resource %>
 
-  <% if devise_mapping.confirmable? && resource.pending_reconfirmation? %>
-    <div>Currently waiting confirmation for: <%= resource.unconfirmed_email %></div>
-  <% end %>
+      <div>
+        <%= f.label :email, "Email", class: "field-label" %>
+        <%= f.email_field :email, autocomplete: "email", required: true, class: "field-input mt-1" %>
+      </div>
 
-  <div class="field">
-    <%= f.label :password %> <i>(leave blank if you don't want to change it)</i><br />
-    <%= f.password_field :password, autocomplete: "new-password" %>
-    <% if @minimum_password_length %>
-      <br />
-      <em><%= @minimum_password_length %> characters minimum</em>
+      <div class="pt-2 border-t border-gray-200">
+        <h2 class="text-sm font-semibold text-gray-900 pt-3">Change password</h2>
+        <p class="field-hint">Leave these blank to keep your current password.</p>
+      </div>
+
+      <div>
+        <%= f.label :password, "New password", class: "field-label" %>
+        <%= f.password_field :password, autocomplete: "new-password", class: "field-input mt-1" %>
+        <% if @minimum_password_length %>
+          <p class="field-hint">At least <%= @minimum_password_length %> characters.</p>
+        <% end %>
+      </div>
+
+      <div>
+        <%= f.label :password_confirmation, "Confirm new password", class: "field-label" %>
+        <%= f.password_field :password_confirmation, autocomplete: "new-password", class: "field-input mt-1" %>
+      </div>
+
+      <div class="pt-2">
+        <%= f.label :current_password, "Current password", class: "field-label" %>
+        <%= f.password_field :current_password, autocomplete: "current-password", required: true,
+                             class: "field-input mt-1" %>
+        <p class="field-hint">We ask for this to confirm the changes are yours.</p>
+      </div>
+
+      <div class="flex items-center gap-3 pt-2">
+        <%= f.submit "Save changes", class: "btn btn-primary" %>
+        <%= link_to "Cancel", root_path, class: "btn btn-white" %>
+      </div>
     <% end %>
   </div>
 
-  <div class="field">
-    <%= f.label :password_confirmation %><br />
-    <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
+  <div class="card card-pad border-rose-200">
+    <h2 class="text-sm font-semibold text-gray-900">Delete your account</h2>
+    <p class="mt-1 text-sm text-gray-500">
+      This removes your login and API keys permanently. Consultations already recorded against your
+      account are retained for the billing record.
+    </p>
+    <div class="mt-4">
+      <%= button_to "Delete my account", registration_path(resource_name), method: :delete,
+                    form: { data: { turbo_confirm: "Delete your account? This cannot be undone." } },
+                    class: "btn btn-danger btn-small" %>
+    </div>
   </div>
-
-  <div class="field">
-    <%= f.label :current_password %> <i>(we need your current password to confirm your changes)</i><br />
-    <%= f.password_field :current_password, autocomplete: "current-password" %>
-  </div>
-
-  <div class="actions">
-    <%= f.submit "Update" %>
-  </div>
-<% end %>
-
-<h3>Cancel my account</h3>
-
-<div>Unhappy? <%= button_to "Cancel my account", registration_path(resource_name), data: { confirm: "Are you sure?", turbo_confirm: "Are you sure?" }, method: :delete %></div>
-
-<%= link_to "Back", :back %>
+</div>

@@ -1,24 +1,64 @@
-<nav class="border-b border-gray-200 shadow-sm">
+<nav class="bg-white border-b border-gray-200" data-controller="mobile-nav">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
     <div class="flex items-center justify-between h-16">
-      <div class="flex items-center">
-        <div class="flex-shrink-0">
-          <%= link_to root_path, class: "flex items-center text-white" do %>
-            <%= render_svg "logo", styles: "fill-current" %>
-          <% end %>
-        </div>
+      <div class="flex items-center gap-8 min-w-0">
+        <%= link_to root_path, class: "flex items-center shrink-0", "aria-label": "Medispeak home" do %>
+          <%= render_svg "logo", styles: "fill-current" %>
+        <% end %>
+
+        <% if user_signed_in? %>
+          <div class="hidden md:flex items-center gap-1">
+            <%= link_to "Overview", root_path, class: nav_link_classes(current_page?(root_path)) %>
+            <%= link_to "Consultations", scribe_sessions_path, class: nav_link_classes(controller_name == "scribe_sessions") %>
+            <%= link_to "Templates", templates_path, class: nav_link_classes(controller_name == "templates") %>
+            <%= link_to "Usage", usage_path, class: nav_link_classes(controller_name == "usage") %>
+            <%= link_to "API keys", api_tokens_path, class: nav_link_classes(controller_name == "api_tokens") %>
+          </div>
+        <% end %>
       </div>
-      <div class="hidden md:block">
-        <div class="ml-4 flex items-center md:ml-6">
-          <% if user_signed_in? %>
-            <%= link_to "API Tokens", api_tokens_path, class: "text-gray-900 hover:bg-gray-200 px-3 py-2 rounded-md text-sm font-medium" %>
-            <%= button_to t(".sign_out"), destroy_user_session_path, method: :delete, class: 'text-gray-900 hover:bg-gray-200 px-3 py-2 rounded-md text-sm font-medium' %>
-          <% else %>
-            <%= link_to t(".log_in"), new_user_session_path, class: 'text-gray-900 hover:bg-gray-200 px-3 py-2 rounded-md text-sm font-medium' %>
-            <%= link_to t(".sign_up"), new_user_registration_path, class: 'text-gray-900 hover:bg-gray-200 px-3 py-2 rounded-md text-sm font-medium' %>
-          <% end %>
-        </div>
+
+      <div class="flex items-center gap-2">
+        <% if user_signed_in? %>
+          <div class="hidden md:flex items-center gap-2">
+            <% if current_user.admin? %>
+              <%= link_to "Admin", admin_root_path, class: "px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:text-gray-900 no-underline" %>
+            <% end %>
+            <%= link_to current_account&.name.to_s.truncate(28), account_path,
+                        class: nav_link_classes(controller_name == "accounts") %>
+            <%= button_to "Sign out", destroy_user_session_path, method: :delete,
+                          class: "btn btn-white btn-small" %>
+          </div>
+          <button type="button" class="md:hidden inline-flex items-center justify-center rounded-md p-2 text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  data-action="mobile-nav#toggle" aria-controls="mobile-menu" aria-expanded="false">
+            <span class="sr-only">Open main menu</span>
+            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+        <% else %>
+          <%= link_to "Log in", new_user_session_path, class: nav_link_classes(false) %>
+          <%= link_to "Sign up", new_user_registration_path, class: "btn btn-primary btn-small" %>
+        <% end %>
       </div>
     </div>
   </div>
+
+  <% if user_signed_in? %>
+    <div class="md:hidden hidden border-t border-gray-200" id="mobile-menu" data-mobile-nav-target="menu">
+      <div class="space-y-1 px-4 py-3">
+        <%= link_to "Overview", root_path, class: "block #{nav_link_classes(current_page?(root_path))}" %>
+        <%= link_to "Consultations", scribe_sessions_path, class: "block #{nav_link_classes(controller_name == 'scribe_sessions')}" %>
+        <%= link_to "Templates", templates_path, class: "block #{nav_link_classes(controller_name == 'templates')}" %>
+        <%= link_to "Usage", usage_path, class: "block #{nav_link_classes(controller_name == 'usage')}" %>
+        <%= link_to "API keys", api_tokens_path, class: "block #{nav_link_classes(controller_name == 'api_tokens')}" %>
+        <%= link_to "Account", account_path, class: "block #{nav_link_classes(controller_name == 'accounts')}" %>
+        <% if current_user.admin? %>
+          <%= link_to "Admin", admin_root_path, class: "block #{nav_link_classes(false)}" %>
+        <% end %>
+        <div class="pt-2">
+          <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "btn btn-white btn-small btn-block" %>
+        </div>
+      </div>
+    </div>
+  <% end %>
 </nav>

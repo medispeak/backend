@@ -15,6 +15,9 @@ class AccountDashboard < Administrate::BaseDashboard
     name: Field::String,
     status: Field::String,
     settings: Field::Text,
+    parent: Field::BelongsTo.with_options(class_name: "Account"),
+    children: Field::HasMany.with_options(class_name: "Account"),
+    usage_limits: Field::HasMany,
     credit_balance: Field::String,
     api_tokens_count: Field::Number,
     created_at: Field::DateTime,
@@ -29,6 +32,7 @@ class AccountDashboard < Administrate::BaseDashboard
   COLLECTION_ATTRIBUTES = %i[
     id
     name
+    parent
     status
     credit_balance
   ].freeze
@@ -40,6 +44,9 @@ class AccountDashboard < Administrate::BaseDashboard
     name
     status
     settings
+    parent
+    children
+    usage_limits
     credit_balance
     api_tokens_count
     created_at
@@ -53,6 +60,7 @@ class AccountDashboard < Administrate::BaseDashboard
     name
     status
     settings
+    parent
   ].freeze
 
   # COLLECTION_FILTERS

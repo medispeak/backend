@@ -39,3 +39,6 @@
 .gstack/
 .agents/
 skills-lock.json
+
+# macOS Finder metadata
+.DS_Store

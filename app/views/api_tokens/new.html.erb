@@ -1,27 +1,44 @@
-<div class="container mx-auto px-4 py-8">
-  <h1 class="text-2xl font-bold mb-6">Generate New API Token</h1>
-  <%= form_with(model: @api_token, data: { turbo: false }, class: "space-y-6") do |form| %>
-    <% if @api_token.errors.any? %>
-      <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-        <strong class="font-bold">Error:</strong>
-        <ul>
-          <% @api_token.errors.full_messages.each do |message| %>
-            <li><%= message %></li>
-          <% end %>
-        </ul>
+<% content_for :title, "Create API key" %>
+
+<%= render "shared/page_header",
+      title: "Create API key",
+      subtitle: "The key authenticates your app's server against the Medispeak API." do %>
+  <%= link_to "Back to API keys", api_tokens_path, class: "btn btn-white" %>
+<% end %>
+
+<div class="max-w-xl">
+  <%= render "shared/error_messages", resource: @api_token %>
+
+  <div class="card card-pad">
+    <%= form_with model: @api_token, class: "space-y-6" do |form| %>
+      <div>
+        <%= form.label :name, "Name", class: "field-label" %>
+        <%= form.text_field :name,
+              required: true,
+              autofocus: true,
+              placeholder: "Production server",
+              class: "field-input mt-1" %>
+        <p class="field-hint">A label you will recognise later — the app or environment that will use this key.</p>
+      </div>
+
+      <div>
+        <%= form.label :expires_at, "Expires", class: "field-label" %>
+        <%= form.select :expires_at,
+              options_for_select(expiry_options, @api_token.expires_at&.iso8601),
+              {},
+              class: "field-input mt-1" %>
+        <p class="field-hint">Every key expires. Rotate it before this date so your integration keeps working.</p>
+      </div>
+
+      <div class="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600">
+        The key is shown once, on the next screen. Store it in your server's secrets — it must never ship in
+        client-side code or a public repository.
+      </div>
+
+      <div class="flex items-center gap-3">
+        <%= form.submit "Create API key", class: "btn btn-primary" %>
+        <%= link_to "Cancel", api_tokens_path, class: "btn btn-white" %>
       </div>
     <% end %>
-    <div>
-      <%= form.label :name, class: "block text-sm font-medium text-gray-700" %>
-      <%= form.text_field :name, class: "mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" %>
-    </div>
-    <div>
-      <%= form.label :expires_at, class: "block text-sm font-medium text-gray-700" %>
-      <%= form.datetime_select :expires_at, class: "mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" %>
-    </div>
-    <div>
-      <%= form.submit "Generate Token", class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" %>
-    </div>
-  <% end %>
-  <%= link_to 'Back to API Tokens', api_tokens_path, class: "mt-4 inline-block text-sm text-indigo-600 hover:text-indigo-500" %>
+  </div>
 </div>

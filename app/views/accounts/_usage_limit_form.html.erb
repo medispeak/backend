@@ -1,0 +1,51 @@
+<%#
+  Add a spending cap to the current account. The account is never a form field:
+  UsageLimitsController always writes through current_account.
+  Usage: render "accounts/usage_limit_form", usage_limit: @usage_limit
+%>
+<%= form_with model: usage_limit, url: account_usage_limits_path, method: :post do |f| %>
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
+    <div>
+      <%= f.label :scope, "Applies to", class: "field-label" %>
+      <%= f.select :scope,
+            options_for_select(UsageLimit::SCOPES.map { |s| [ usage_limit_scope_label(s), s ] }, usage_limit.scope),
+            {},
+            class: "field-input mt-1" %>
+    </div>
+
+    <div>
+      <%= f.label :metric, "Metric", class: "field-label" %>
+      <%= f.select :metric,
+            options_for_select(UsageLimit::METRICS.map { |m| [ m.humanize, m ] }, usage_limit.metric),
+            {},
+            class: "field-input mt-1" %>
+    </div>
+
+    <div>
+      <%= f.label :period, "Period", class: "field-label" %>
+      <%= f.select :period,
+            options_for_select(UsageLimit::PERIODS.map { |p| [ p.humanize, p ] }, usage_limit.period),
+            {},
+            class: "field-input mt-1" %>
+    </div>
+
+    <div>
+      <%= f.label :limit_value, "Limit", class: "field-label" %>
+      <%= f.number_field :limit_value,
+            required: true,
+            step: "any",
+            min: 0,
+            placeholder: "100",
+            class: "field-input num mt-1" %>
+    </div>
+
+    <div>
+      <%= f.submit "Add cap", class: "btn btn-primary btn-block" %>
+    </div>
+  </div>
+
+  <p class="field-hint mt-3">
+    "Whole account" measures this account and everything under it together. "Each user" measures every
+    person separately. Cost is in dollars; tokens are counted across the models this account uses.
+  </p>
+<% end %>

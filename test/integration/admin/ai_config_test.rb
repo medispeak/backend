@@ -30,7 +30,7 @@ module Admin
     test "ai_providers show does not leak the api_key" do
       get admin_ai_provider_path(@provider)
       assert_response :success
-      refute_includes response.body, @provider.api_key
+      assert_not_includes response.body, @provider.api_key
     end
 
     test "ai_models index renders" do

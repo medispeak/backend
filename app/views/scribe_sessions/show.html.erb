@@ -1,0 +1,223 @@
+<% content_for :title, "Consultation ##{@scribe_session.id}" %>
+
+<%
+  summary = [
+    @scribe_session.modality.to_s.humanize,
+    @scribe_session.mode.to_s.humanize,
+    ("language #{@scribe_session.language}" if @scribe_session.language.present?),
+    "started #{friendly_time(@scribe_session.created_at)}"
+  ].compact.join(" · ")
+%>
+
+<%= render "shared/page_header",
+      title: safe_join([ "Consultation ", tag.span("##{@scribe_session.id}", class: "font-mono") ]),
+      subtitle: summary do %>
+  <%= status_badge(@scribe_session.status) %>
+  <%= link_to "All consultations", scribe_sessions_path, class: "btn btn-white btn-small" %>
+<% end %>
+
+<% if @scribe_session.expired? %>
+  <%#
+    Expiry closes the session to further capture — the API answers 410 for more
+    audio/documents and for a commit. It does not delete anything (nothing in
+    this app purges media), so the notice says only what is true. Deliberate
+    state, not a fault: neutral, not an error colour.
+  %>
+  <div class="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+    This consultation expired on <%= @scribe_session.expires_at.strftime("%-d %b %Y, %H:%M") %>.
+    No further <%= @scribe_session.modality_document? ? "documents" : "audio" %> can be added to it and
+    it can no longer be committed. Everything already captured is shown below.
+  </div>
+<% end %>
+
+<%#
+  Pipeline strip: where this session actually got to. Each stage's state is
+  derived in the controller from persisted data — attachments, the transcript
+  row, output statuses — never inferred from the session status alone.
+%>
+<% stage_badge = {
+     done: "badge-success",
+     in_progress: "badge-progress",
+     partial: "badge-partial",
+     failed: "badge-failed",
+     pending: "badge-neutral"
+   } %>
+
+<section class="card card-pad">
+  <h2 class="text-sm font-semibold text-gray-900">Pipeline</h2>
+  <ol class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
+    <% @pipeline.each_with_index do |stage, index| %>
+      <% if index.positive? %>
+        <li class="hidden shrink-0 items-center text-gray-300 sm:flex" role="presentation" aria-hidden="true">→</li>
+      <% end %>
+      <li class="flex-1 rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3">
+        <div class="flex items-start justify-between gap-2">
+          <p class="text-sm font-medium text-gray-900"><%= stage.label %></p>
+          <span class="badge <%= stage_badge.fetch(stage.state, "badge-neutral") %> shrink-0">
+            <%= stage.state.to_s.humanize %>
+          </span>
+        </div>
+        <p class="mt-1 text-xs text-gray-500"><%= stage.detail %></p>
+      </li>
+    <% end %>
+  </ol>
+</section>
+
+<%#
+  --- Transcript ------------------------------------------------------------
+  An OCR session stores its extracted text in the same Transcript row, so this
+  card serves both modalities — under the name that matches what happened.
+%>
+<% transcript = @scribe_session.transcript %>
+<% live_transcript = transcript.present? ? nil : @scribe_session.live_transcript %>
+<% text_label = @scribe_session.modality_document? ? "Extracted text" : "Transcript" %>
+
+<section class="card mt-6">
+  <div class="card-header flex flex-wrap items-center justify-between gap-2">
+    <h2 class="text-sm font-semibold text-gray-900"><%= text_label %></h2>
+    <% if transcript.present? %>
+      <%#
+        format_duration renders "—" for zero, which is right in a table cell but
+        reads as a hole mid-sentence ("en · — · openai") — and a document has no
+        duration at all. Drop the term instead of printing the placeholder.
+      %>
+      <p class="num text-xs text-gray-500">
+        <%= [
+              transcript.language.presence,
+              (format_duration(transcript.duration_seconds) if transcript.duration_seconds.to_f.positive?),
+              [ transcript.provider.presence, transcript.model.presence ].compact.join(" ").presence
+            ].compact.join(" · ") %>
+      </p>
+    <% elsif live_transcript.present? %>
+      <span class="badge badge-progress">In progress</span>
+    <% end %>
+  </div>
+
+  <% if transcript.present? || live_transcript.present? %>
+    <div class="card-pad">
+      <% text = transcript.present? ? transcript.text : live_transcript %>
+      <% if text.present? %>
+        <p class="mono max-w-prose whitespace-pre-wrap leading-6 text-gray-800"><%= text %></p>
+      <% else %>
+        <p class="text-sm text-gray-500">No text was saved for this session.</p>
+      <% end %>
+      <% if live_transcript.present? %>
+        <p class="mt-3 text-xs text-gray-500">
+          Partial text from the segments transcribed so far. The final transcript is written when the session is committed.
+        </p>
+      <% end %>
+    </div>
+  <% else %>
+    <% waiting_body = if @scribe_session.modality_document?
+                        "The extracted text appears once the uploaded document has been read."
+                      else
+                        "The transcript appears once the recording has been uploaded and committed."
+                      end %>
+    <%= render "shared/empty_state",
+          title: "No #{text_label.downcase} yet",
+          body: @scribe_session.failed? ? "This session failed before any text was produced." : waiting_body %>
+  <% end %>
+</section>
+
+<%# --- Outputs ------------------------------------------------------------- %>
+<section class="mt-6">
+  <div class="mb-3 flex items-center justify-between gap-2">
+    <h2 class="text-sm font-semibold text-gray-900">Outputs</h2>
+    <% if @outputs.any? %>
+      <p class="num text-xs text-gray-500"><%= pluralize(@outputs.size, "output") %></p>
+    <% end %>
+  </div>
+
+  <% if @outputs.any? %>
+    <div class="space-y-4">
+      <%= render partial: "scribe_sessions/output", collection: @outputs, as: :output %>
+    </div>
+  <% else %>
+    <div class="card">
+      <%= render "shared/empty_state",
+            title: "No outputs",
+            body: "This session asked for no structured output. Outputs are requested when the session is created, by naming a template page or inline fields." %>
+    </div>
+  <% end %>
+</section>
+
+<%# --- Usage --------------------------------------------------------------- %>
+<section class="card mt-6">
+  <div class="card-header">
+    <h2 class="text-sm font-semibold text-gray-900">Usage</h2>
+  </div>
+
+  <% usage_badge = { "finalized" => "badge-neutral", "pending" => "badge-progress", "failed" => "badge-failed" } %>
+  <% if @usage_events.any? %>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Function</th>
+            <th scope="col">Model</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="text-right">Tokens</th>
+            <th scope="col" class="text-right">Measured</th>
+            <th scope="col" class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% @usage_events.each do |event| %>
+            <tr>
+              <td class="whitespace-nowrap font-medium text-gray-900">
+                <%= capability_name(event.function) %>
+              </td>
+              <td class="mono whitespace-nowrap text-gray-600">
+                <%= [ event.provider.presence, event.model.presence ].compact.join(" ").presence || "—" %>
+              </td>
+              <%#
+                A pending event is a reservation, not a charge — it must not
+                look identical to a settled one.
+              %>
+              <td><span class="badge <%= usage_badge.fetch(event.status, "badge-neutral") %>"><%= event.status.to_s.humanize %></span></td>
+              <td class="num text-right"><%= format_tokens(event.total_tokens) %></td>
+              <td class="num whitespace-nowrap text-right text-gray-500">
+                <% if event.audio_seconds.to_f.positive? %>
+                  <%= format_duration(event.audio_seconds) %> audio
+                <% elsif event.pages.to_i.positive? %>
+                  <%= pluralize(event.pages, "page") %>
+                <% else %>
+                  —
+                <% end %>
+              </td>
+              <%# Six places: a single provider call can cost a fraction of a cent. %>
+              <td class="num text-right"><%= format_cost(event.cost, precision: 6) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+        <tfoot class="border-t border-gray-200 bg-gray-50">
+          <tr>
+            <td class="px-4 py-3 text-sm font-medium text-gray-900" colspan="3">Total</td>
+            <td class="num px-4 py-3 text-right text-sm font-medium text-gray-900">
+              <%= format_tokens(@usage_events.sum { |event| event.total_tokens.to_i }) %>
+            </td>
+            <td></td>
+            <%#
+              Only settled events are added up: a pending one is a reservation
+              that is recomputed on settlement and a failed one is never
+              charged. Same rule as the Usage page, so the two agree. Said out
+              loud whenever the total therefore omits a row above.
+            %>
+            <% settled = @usage_events.select(&:finalized?) %>
+            <% total_cost = settled.sum { |event| event.cost || 0 } %>
+            <td class="num px-4 py-3 text-right text-sm font-medium text-gray-900">
+              <%= total_cost.positive? && total_cost < 0.005 ? "<$0.01" : format_cost(total_cost) %>
+              <% if settled.size < @usage_events.size %>
+                <span class="block text-xs font-normal text-gray-500">settled only</span>
+              <% end %>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  <% else %>
+    <%= render "shared/empty_state",
+          title: "Nothing metered yet",
+          body: "Provider calls are recorded here as the session is transcribed and structured." %>
+  <% end %>
+</section>

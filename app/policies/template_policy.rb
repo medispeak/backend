@@ -1,14 +1,14 @@
+# Templates are tenant data: only the owning account (or an admin) may read or
+# write them. Legacy templates with a NULL account_id are admin-only. Reads used
+# to be unconditionally public — index?/show? returned true — which exposed every
+# account's form schemas and prompts to anonymous visitors.
 class TemplatePolicy < ApplicationPolicy
   def index?
-    true
+    user.present?
   end
 
   def show?
-    true
-  end
-
-  def find_by_domain?
-    true
+    owned_or_admin?
   end
 
   def new?
@@ -24,28 +24,28 @@ class TemplatePolicy < ApplicationPolicy
   end
 
   def update?
-    return false unless user.present?
-
-    user.admin? || owns?
+    owned_or_admin?
   end
 
   def destroy?
     update?
   end
 
-  # An admin may act on any template; a regular user only on their own account's.
-  # Legacy templates with no owner (account_id NULL) are admin-only-editable.
   class Scope < Scope
     def resolve
-      return scope.all if user&.admin?
+      return scope.none if user.blank?
+      return scope.all if user.admin?
 
-      scope.where(account_id: user&.account_id)
+      scope.where(account_id: user.account_id)
     end
   end
 
   private
 
-  def owns?
-    user.present? && record.account_id.present? && record.account_id == user.account_id
+  def owned_or_admin?
+    return false if user.blank?
+    return true if user.admin?
+
+    record.account_id.present? && record.account_id == user.account_id
   end
 end

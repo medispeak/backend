@@ -1,0 +1,97 @@
+<% content_for :title, "Consultations" %>
+
+<%= render "shared/page_header",
+      title: "Consultations",
+      subtitle: "Every session your app has sent, newest first." %>
+
+<%#
+  Only validated filter values are ever echoed back into a URL, so the filter
+  bar can never reflect an arbitrary query string.
+%>
+<% current_filters = { status: status_filter, modality: modality_filter } %>
+<% filter_url = ->(overrides) { scribe_sessions_path(current_filters.merge(overrides).compact_blank) } %>
+
+<%#
+  An account with nothing at all gets no filter bar — there is nothing to
+  narrow, and the empty state should be the only thing on the page.
+%>
+<% if @scribe_sessions.any? || status_filter || modality_filter %>
+  <div class="mb-5 space-y-2">
+    <div class="flex flex-wrap items-center gap-1.5">
+      <span class="mr-1 text-xs font-medium uppercase tracking-wider text-gray-400">Status</span>
+      <%= link_to "All", filter_url.call(status: nil),
+            class: "btn btn-small #{status_filter ? 'btn-white' : 'btn-gray'}" %>
+      <% ScribeSession.statuses.keys.each do |status| %>
+        <%= link_to status.humanize, filter_url.call(status: status),
+              class: "btn btn-small #{status_filter == status ? 'btn-gray' : 'btn-white'}" %>
+      <% end %>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-1.5">
+      <span class="mr-1 text-xs font-medium uppercase tracking-wider text-gray-400">Source</span>
+      <%= link_to "All", filter_url.call(modality: nil),
+            class: "btn btn-small #{modality_filter ? 'btn-white' : 'btn-gray'}" %>
+      <% ScribeSession.modalities.keys.each do |modality| %>
+        <%= link_to modality.humanize, filter_url.call(modality: modality),
+              class: "btn btn-small #{modality_filter == modality ? 'btn-gray' : 'btn-white'}" %>
+      <% end %>
+    </div>
+  </div>
+<% end %>
+
+<% if @scribe_sessions.any? %>
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Session</th>
+            <th scope="col">Created</th>
+            <th scope="col">Status</th>
+            <th scope="col">Source</th>
+            <th scope="col">Mode</th>
+            <th scope="col" class="text-right">Outputs</th>
+            <th scope="col" class="text-right">Duration</th>
+            <th scope="col" class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <%= render partial: "scribe_sessions/session_row",
+                collection: @scribe_sessions, as: :scribe_session %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <% if @pagy.pages > 1 %>
+    <div class="mt-4 flex items-center justify-between text-sm text-gray-600">
+      <p class="num">Showing <%= @pagy.from %>–<%= @pagy.to %> of <%= @pagy.count %></p>
+      <div class="flex items-center gap-2">
+        <% if @pagy.prev %>
+          <%= link_to "Previous", filter_url.call(page: @pagy.prev), class: "btn btn-white btn-small" %>
+        <% end %>
+        <% if @pagy.next %>
+          <%= link_to "Next", filter_url.call(page: @pagy.next), class: "btn btn-white btn-small" %>
+        <% end %>
+      </div>
+    </div>
+  <% end %>
+<% else %>
+  <div class="card">
+    <%#
+      Sessions arrive through the API and cannot be created in this UI, so the
+      next action depends on whether anything is being filtered out.
+    %>
+    <% if status_filter || modality_filter %>
+      <%= render "shared/empty_state",
+            title: "No consultations match this filter",
+            body: "Nothing here with the filters you picked. Clear them to see every session.",
+            cta: link_to("Clear filters", scribe_sessions_path, class: "btn btn-white btn-small") %>
+    <% else %>
+      <%= render "shared/empty_state",
+            title: "No consultations yet",
+            body: "Consultations appear here as soon as your application posts audio or a document to the API.",
+            cta: link_to("Create an API key", new_api_token_path, class: "btn btn-primary btn-small") %>
+    <% end %>
+  </div>
+<% end %>

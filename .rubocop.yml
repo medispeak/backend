@@ -6,3 +6,13 @@ inherit_gem: { rubocop-rails-omakase: rubocop.yml }
 # # Use `[a, [b, c]]` not `[ a, [ b, c ] ]`
 # Layout/SpaceInsideArrayLiteralBrackets:
 #   Enabled: false
+
+# These suites inherit from plain Minitest::Test rather than
+# ActiveSupport::TestCase, so the Rails-only assert_not family does not exist
+# there. Leave their refute_* calls alone.
+Rails/RefuteMethods:
+  Exclude:
+    - "test/services/llm/foundation_test.rb"
+    - "test/services/llm/adapters/anthropic_adapter_test.rb"
+    - "test/services/scribe/stages_test.rb"
+    - "test/services/scribe/schema_validator_test.rb"

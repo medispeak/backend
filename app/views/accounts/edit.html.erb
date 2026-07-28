@@ -1,0 +1,41 @@
+<% content_for :title, "Edit account" %>
+
+<%= render "shared/page_header",
+      title: "Edit account",
+      subtitle: "Change how this account is named and where its results are sent by default." do %>
+  <%= link_to "Back to account", account_path, class: "btn btn-white" %>
+<% end %>
+
+<div class="max-w-xl">
+  <%= render "shared/error_messages", resource: @account %>
+
+  <div class="card card-pad">
+    <%= form_with model: @account, url: account_path, method: :patch, class: "space-y-6" do |form| %>
+      <div>
+        <%= form.label :name, "Account name", class: "field-label" %>
+        <%= form.text_field :name,
+              required: true,
+              autofocus: true,
+              placeholder: "St Mary's Cardiology",
+              class: "field-input mt-1" %>
+        <p class="field-hint">Shown across the app and on every report for this account.</p>
+      </div>
+
+      <div>
+        <%= form.label :default_callback_url, "Default callback URL", class: "field-label" %>
+        <%= form.url_field :default_callback_url,
+              placeholder: "https://your-server.example.com/medispeak/webhooks",
+              class: "field-input mono mt-1" %>
+        <p class="field-hint">
+          Stored for this account. Each session sends its results to the callback URL given when it is
+          created. Leave blank if you poll the API instead.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <%= form.submit "Save changes", class: "btn btn-primary" %>
+        <%= link_to "Cancel", account_path, class: "btn btn-white" %>
+      </div>
+    <% end %>
+  </div>
+</div>

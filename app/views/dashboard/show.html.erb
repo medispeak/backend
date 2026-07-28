@@ -1,19 +1,144 @@
-<div class="container mx-auto p-6">
-  <div class="mx-auto max-w-3xl">
-    <h1 class="text-3xl font-bold tracking-tight text-gray-800">MediSpeak</h1>
-    <p class="mt-3 text-base leading-7 text-gray-600">
-      Model-agnostic clinical scribe. Manage AI providers, models, form templates and
-      inspect scribe sessions and usage from the admin.
-    </p>
-    <div class="mt-8 flex flex-wrap gap-4">
-      <%= link_to "Open Admin", admin_root_path,
-            class: "rounded-lg bg-gray-900 px-5 py-3 font-semibold text-white hover:bg-gray-700" %>
-      <%= link_to "Scribe Sessions", admin_scribe_sessions_path,
-            class: "rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-500" %>
-      <%= link_to "Usage", admin_usage_events_path,
-            class: "rounded-lg border border-gray-300 px-5 py-3 font-semibold text-gray-800 hover:bg-gray-50" %>
-      <%= link_to "API Tokens", api_tokens_path,
-            class: "rounded-lg border border-gray-300 px-5 py-3 font-semibold text-gray-800 hover:bg-gray-50" %>
-    </div>
+<% content_for :title, "Overview · Medispeak" %>
+
+<%= render "shared/page_header",
+      title: "Overview",
+      subtitle: "#{current_account.name} · #{Time.current.strftime('%B %Y')}" do %>
+  <%= link_to "View usage", usage_path, class: "btn btn-white btn-small" %>
+  <%= link_to "All consultations", scribe_sessions_path, class: "btn btn-primary btn-small" %>
+<% end %>
+
+<%#
+  Stat cards. Flex rather than a fixed grid because the credit card is present
+  only for accounts on credit — the row has to look deliberate at three cards
+  and at four.
+%>
+<div class="flex flex-wrap gap-4">
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Consultations</p>
+    <p class="stat-value mt-1"><%= number_with_delimiter(@sessions_this_month) %></p>
+    <p class="mt-1 text-xs text-gray-500">This month</p>
   </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Transcription</p>
+    <p class="stat-value mt-1">
+      <% if @transcription_minutes.positive? && @transcription_minutes < 1 %>
+        &lt;1<span class="ml-1 text-base font-normal text-gray-500">min</span>
+      <% else %>
+        <%= number_with_delimiter(@transcription_minutes.round) %><span class="ml-1 text-base font-normal text-gray-500">min</span>
+      <% end %>
+    </p>
+    <p class="mt-1 text-xs text-gray-500">Audio metered this month</p>
+  </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Spend</p>
+    <p class="stat-value mt-1"><%= format_cost(@spend_this_month) %></p>
+    <p class="mt-1 text-xs text-gray-500">Finalized charges this month</p>
+  </div>
+
+  <% if @account_credit.present? %>
+    <div class="card card-pad flex-1 min-w-[13rem]">
+      <p class="stat-label">Credit balance</p>
+      <p class="stat-value mt-1"><%= format_cost(@account_credit.balance) %></p>
+      <p class="mt-1 text-xs text-gray-500">
+        <% if @account_credit.credit_limit.present? %>
+          Limit <%= format_cost(@account_credit.credit_limit) %>
+        <% else %>
+          Available now
+        <% end %>
+      </p>
+    </div>
+  <% end %>
 </div>
+
+<div class="card mt-6">
+  <div class="card-header flex items-center justify-between gap-3">
+    <h2 class="text-sm font-semibold text-gray-900">Recent consultations</h2>
+    <% if @recent_sessions.any? %>
+      <%= link_to "View all", scribe_sessions_path, class: "text-sm font-medium" %>
+    <% end %>
+  </div>
+
+  <% if @recent_sessions.any? %>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Session</th>
+            <th scope="col">Status</th>
+            <th scope="col">Source</th>
+            <th scope="col" class="text-right">Outputs</th>
+            <th scope="col">Started</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% @recent_sessions.each do |session| %>
+            <tr>
+              <td>
+                <%= link_to "##{session.id}", scribe_session_path(session), class: "mono font-medium" %>
+              </td>
+              <td><%= status_badge(session.status) %></td>
+              <td class="whitespace-nowrap">
+                <span class="text-gray-900"><%= session.modality.to_s.humanize %></span>
+                <span class="text-gray-300">·</span>
+                <span class="text-gray-500"><%= session.mode.to_s.humanize %></span>
+              </td>
+              <td class="text-right num"><%= session.scribe_outputs.size %></td>
+              <td class="whitespace-nowrap text-gray-500"><%= friendly_time(session.created_at) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  <% else %>
+    <%#
+      Sessions are created through the API, never in this UI, so the next
+      action on an empty Overview is an API key — not a "new consultation"
+      button that cannot exist.
+    %>
+    <%= render "shared/empty_state",
+          title: "No consultations yet",
+          body: "Consultations appear here as soon as your application posts audio or a document to the API.",
+          cta: link_to("Create an API key", new_api_token_path, class: "btn btn-primary btn-small") %>
+  <% end %>
+</div>
+
+<% if @onboarding %>
+  <div class="card card-pad mt-6">
+    <h2 class="text-sm font-semibold text-gray-900">Getting started</h2>
+    <p class="mt-1 text-sm text-gray-500">Three steps to your first structured note.</p>
+
+    <ol class="mt-5 list-none space-y-5">
+      <li class="flex gap-3">
+        <span class="num flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">1</span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-gray-900">
+            <%= link_to "Create an API key", new_api_token_path %>
+          </p>
+          <p class="mt-0.5 text-sm text-gray-500">Your application authenticates with a bearer token. The key is shown once, at creation.</p>
+        </div>
+      </li>
+
+      <li class="flex gap-3">
+        <span class="num flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">2</span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-gray-900">
+            <%= link_to "Create a template", new_template_path %>
+          </p>
+          <p class="mt-0.5 text-sm text-gray-500">A template defines the pages and fields a transcript is structured into.</p>
+        </div>
+      </li>
+
+      <li class="flex gap-3">
+        <span class="num flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">3</span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-gray-900">Post a session from your app</p>
+          <p class="mt-0.5 text-sm text-gray-500">
+            Start with <span class="mono text-gray-700">POST /api/v2/scribe_sessions</span>, upload the audio, then commit the session. Results land here.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+<% end %>

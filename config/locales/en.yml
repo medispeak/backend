@@ -1,31 +1,23 @@
-# Files in the config/locales directory are used for internationalization and
-# are automatically loaded by Rails. If you want to use locales other than
-# English, add the necessary files in this directory.
+# Internationalization for the application UI.
 #
-# To use the locales, use `I18n.t`:
+# The UI ships its English copy inline in the views; this file carries the
+# Rails-managed strings — model and attribute names — that surface inside
+# validation messages, so a failure reads "Spending cap limit must be greater
+# than 0" rather than exposing column names.
 #
-#     I18n.t "hello"
-#
-# In views, this is aliased to just `t`:
-#
-#     <%= t("hello") %>
-#
-# To use a different locale, set it with `I18n.locale`:
-#
-#     I18n.locale = :es
-#
-# This would use the information in config/locales/es.yml.
-#
-# To learn more about the API, please read the Rails Internationalization guide
-# at https://guides.rubyonrails.org/i18n.html.
-#
-# Be aware that YAML interprets the following case-insensitive strings as
-# booleans: `true`, `false`, `on`, `off`, `yes`, `no`. Therefore, these strings
-# must be quoted to be interpreted as strings. For example:
-#
-#     en:
-#       "yes": yup
-#       enabled: "ON"
-
+# See https://guides.rubyonrails.org/i18n.html
 en:
-  hello: "Hello world"
+  activerecord:
+    models:
+      scribe_session: "Consultation"
+      api_token: "API key"
+      usage_limit: "Spending cap"
+      form_field: "Field"
+    attributes:
+      api_token:
+        expires_at: "Expiry"
+        name: "Name"
+      usage_limit:
+        limit_value: "Limit"
+      account:
+        default_callback_url: "Webhook URL"

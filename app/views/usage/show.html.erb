@@ -1,0 +1,232 @@
+<% content_for :title, "Usage" %>
+
+<%
+  period_labels = { "month" => "This month", "week" => "This week", "all" => "All time" }
+%>
+
+<%= render "shared/page_header",
+      title: "Usage",
+      subtitle: "#{current_account.name} · #{period_labels[@period].downcase}" do %>
+  <nav class="inline-flex rounded-lg border border-gray-300 bg-white p-1 shadow-sm" aria-label="Reporting period">
+    <% UsageController::PERIODS.each do |period| %>
+      <%= link_to period_labels[period], usage_path(period: period),
+            class: "px-3 py-1.5 rounded-md text-sm font-medium no-underline #{period == @period ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:text-gray-900'}",
+            aria: { current: (period == @period ? "page" : nil) } %>
+    <% end %>
+  </nav>
+<% end %>
+
+<%#
+  Stat cards. Spend and tokens are what the account is billed on; minutes,
+  pages and consultations are the volume behind them.
+%>
+<div class="flex flex-wrap gap-4">
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Spend</p>
+    <p class="stat-value mt-1"><%= format_cost(@total_cost) %></p>
+    <p class="mt-1 text-xs text-gray-500">Finalized charges</p>
+  </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Tokens</p>
+    <p class="stat-value mt-1"><%= format_tokens(@total_tokens) %></p>
+    <p class="mt-1 text-xs text-gray-500">Input and output</p>
+  </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Transcription</p>
+    <p class="stat-value mt-1">
+      <% if @transcription_minutes.positive? && @transcription_minutes < 1 %>
+        &lt;1<span class="ml-1 text-base font-normal text-gray-500">min</span>
+      <% else %>
+        <%= number_with_delimiter(@transcription_minutes.round) %><span class="ml-1 text-base font-normal text-gray-500">min</span>
+      <% end %>
+    </p>
+    <p class="mt-1 text-xs text-gray-500">Audio metered</p>
+  </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Document pages</p>
+    <p class="stat-value mt-1"><%= number_with_delimiter(@document_pages) %></p>
+    <p class="mt-1 text-xs text-gray-500">Read by OCR</p>
+  </div>
+
+  <div class="card card-pad flex-1 min-w-[13rem]">
+    <p class="stat-label">Consultations</p>
+    <p class="stat-value mt-1"><%= number_with_delimiter(@session_count) %></p>
+    <p class="mt-1 text-xs text-gray-500">Sessions started</p>
+  </div>
+</div>
+
+<% if @event_count.zero? %>
+  <div class="card mt-6">
+    <%= render "shared/empty_state",
+          title: "Nothing metered in this period",
+          body: "Usage is recorded when a consultation is transcribed, structured or read by OCR. Widen the period, or send a session from your application to start metering.",
+          cta: (@period == "all" ?
+                  link_to("View consultations", scribe_sessions_path, class: "btn btn-white btn-small") :
+                  link_to("View all time", usage_path(period: "all"), class: "btn btn-white btn-small")) %>
+  </div>
+<% else %>
+  <div class="card overflow-hidden mt-6">
+    <div class="card-header">
+      <h2 class="text-sm font-semibold text-gray-900">By capability</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Capability</th>
+            <th scope="col" class="text-right">Events</th>
+            <th scope="col" class="text-right">Tokens</th>
+            <th scope="col" class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% @by_function.each do |row| %>
+            <tr>
+              <td class="whitespace-nowrap font-medium text-gray-900">
+                <%= capability_name(row[:function]) %>
+              </td>
+              <td class="num text-right"><%= number_with_delimiter(row[:count]) %></td>
+              <td class="num text-right"><%= format_tokens(row[:tokens]) %></td>
+              <td class="num text-right"><%= format_cost(row[:cost], precision: 4) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden mt-6">
+    <div class="card-header">
+      <h2 class="text-sm font-semibold text-gray-900">By model</h2>
+      <p class="mt-0.5 text-xs text-gray-500">Highest spend first.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Model</th>
+            <th scope="col">Provider</th>
+            <th scope="col" class="text-right">Events</th>
+            <th scope="col" class="text-right">Tokens</th>
+            <th scope="col" class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% @by_model.each do |row| %>
+            <tr>
+              <td class="mono whitespace-nowrap text-gray-900">
+                <%= row[:model].presence || tag.span("—", class: "text-gray-400") %>
+              </td>
+              <td class="whitespace-nowrap text-gray-500">
+                <%= row[:provider].presence || tag.span("—", class: "text-gray-400") %>
+              </td>
+              <td class="num text-right"><%= number_with_delimiter(row[:count]) %></td>
+              <td class="num text-right"><%= format_tokens(row[:tokens]) %></td>
+              <td class="num text-right"><%= format_cost(row[:cost], precision: 4) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <% if @user_count > 1 %>
+    <div class="card overflow-hidden mt-6">
+      <div class="card-header">
+        <h2 class="text-sm font-semibold text-gray-900">By user</h2>
+        <p class="mt-0.5 text-xs text-gray-500">Sessions sent with an account key are not attributed to a person.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">User</th>
+              <th scope="col" class="text-right">Events</th>
+              <th scope="col" class="text-right">Tokens</th>
+              <th scope="col" class="text-right">Cost</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <% @by_user.each do |row| %>
+              <tr>
+                <td class="whitespace-nowrap text-gray-900">
+                  <%= row[:email].presence || tag.span("Unattributed", class: "text-gray-400") %>
+                </td>
+                <td class="num text-right"><%= number_with_delimiter(row[:count]) %></td>
+                <td class="num text-right"><%= format_tokens(row[:tokens]) %></td>
+                <td class="num text-right"><%= format_cost(row[:cost], precision: 4) %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  <% end %>
+<% end %>
+
+<%#
+  Limits stand apart from the report above: each cap is measured over its own
+  calendar window and counts pending usage, because that is what the service
+  admits new work against.
+%>
+<div class="card mt-6">
+  <div class="card-header">
+    <h2 class="text-sm font-semibold text-gray-900">Limits</h2>
+    <p class="mt-0.5 text-xs text-gray-500">
+      Measured over each cap's own window, not the period above, and counting usage that is still being priced.
+    </p>
+  </div>
+
+  <% if @limits.any? %>
+    <ul class="divide-y divide-gray-100">
+      <% @limits.each do |row| %>
+        <%
+          limit = row[:limit]
+          used = limit.metric == "cost" ? format_cost(row[:used]) : format_tokens(row[:used])
+          cap = limit.metric == "cost" ? format_cost(limit.limit_value) : format_tokens(limit.limit_value)
+          # Colour is the reading, not decoration: rose means the guard is
+          # already refusing work, amber means it is close.
+          bar_class = row[:blocked] ? "bg-rose-500" : (row[:percent] >= 80 ? "bg-amber-500" : "bg-blue-600")
+        %>
+        <li class="px-5 sm:px-6 py-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900">
+                <%= limit.metric == "cost" ? "Spend" : "Tokens" %> ·
+                <%= limit.period == "daily" ? "today" : "this month" %>
+              </p>
+              <p class="mt-0.5 text-xs text-gray-500">
+                <% if limit.scope == "subtree" %>
+                  Everything under <%= limit.account.name %>
+                <% else %>
+                  Per user under <%= limit.account.name %> — showing yours
+                <% end %>
+              </p>
+            </div>
+            <p class="num text-sm text-gray-500 shrink-0">
+              <span class="font-medium text-gray-900"><%= used %></span>
+              of <%= cap %>
+            </p>
+          </div>
+
+          <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100"
+               role="progressbar" aria-valuenow="<%= row[:percent] %>" aria-valuemin="0" aria-valuemax="100"
+               aria-label="<%= limit.metric == 'cost' ? 'Spend' : 'Tokens' %> used against the <%= limit.period %> cap">
+            <div class="h-2 rounded-full <%= bar_class %>" style="width: <%= row[:percent] %>%"></div>
+          </div>
+
+          <% if row[:blocked] %>
+            <p class="mt-2 text-xs text-rose-700">Cap reached — new sessions are refused until the window resets.</p>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+  <% else %>
+    <div class="card-pad text-sm text-gray-500">
+      No caps apply to this account, so usage is uncapped.
+    </div>
+  <% end %>
+</div>

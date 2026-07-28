@@ -1,16 +1,116 @@
-<%= content_for :title, "Template ##{@template.id}" %>
-<%= turbo_stream_from @template %>
-<div class="container px-4 mx-auto my-8">
-  <div class="p-8 bg-white rounded shadow">
-    <%= render @template %>
-  </div>
-  <%= tag.div id: "pages", class: "space-y-4 mt-4" do %>
-    <%= render partial: "pages/index", collection: @template.pages.includes(:form_fields), as: :page %>
-    <div class="hidden only:flex flex-col items-center justify-between lg:flex-row">
-      <%= image_tag "empty.svg", class: "mb-4 lg:w-1/2" %>
-      <div class="flex-1 text-center">
-        <p class="mb-4 h3">Contact our support to setup this page.</p>
-      </div>
-    </div>
+<% content_for :title, @template.name %>
+
+<%= render "shared/page_header", title: @template.name, subtitle: @template.description do %>
+  <%= link_to "All templates", templates_path, class: "btn btn-white" %>
+  <% if policy(@template).update? %>
+    <%= link_to "Edit template", edit_template_path(@template), class: "btn btn-primary" %>
   <% end %>
+  <% if policy(@template).destroy? %>
+    <%= button_to "Delete template", template_path(@template),
+          method: :delete,
+          class: "btn btn-danger",
+          form: { data: { turbo_confirm: "Delete #{@template.name}? Its pages and fields are deleted too." } } %>
+  <% end %>
+<% end %>
+
+<div class="card card-pad mb-6">
+  <dl class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div>
+      <dt class="stat-label">Pages</dt>
+      <dd class="stat-value"><%= @pages.size %></dd>
+    </div>
+    <div>
+      <dt class="stat-label">Fields</dt>
+      <dd class="stat-value"><%= @pages.sum { |page| page.form_fields.size } %></dd>
+    </div>
+    <div>
+      <dt class="stat-label">Status</dt>
+      <dd class="mt-1">
+        <span class="badge <%= @template.archived? ? "badge-neutral" : "badge-success" %>">
+          <%= @template.archived? ? "Archived" : "Active" %>
+        </span>
+      </dd>
+    </div>
+    <div>
+      <dt class="stat-label">Created</dt>
+      <dd class="mt-1 text-sm text-gray-700"><%= friendly_time(@template.created_at) %></dd>
+    </div>
+  </dl>
 </div>
+
+<% if @pages.any? %>
+  <div class="space-y-6">
+    <% @pages.each do |page| %>
+      <section class="card">
+        <div class="card-header flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-base font-semibold tracking-tight text-gray-900"><%= page.name %></h2>
+          <span class="text-sm text-gray-500">
+            <span class="num"><%= page.form_fields.size %></span>
+            <%= "field".pluralize(page.form_fields.size) %>
+          </span>
+        </div>
+
+        <% if page.prompt.present? %>
+          <div class="px-5 sm:px-6 pt-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">AI instructions</p>
+            <p class="mt-1 text-sm text-gray-700"><%= page.prompt %></p>
+          </div>
+        <% end %>
+
+        <% if page.form_fields.any? %>
+          <div class="overflow-x-auto mt-4">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Label</th>
+                  <th scope="col">Field key</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Details</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <%# sort_by on the preloaded association: creation order, no extra query %>
+                <% page.form_fields.sort_by(&:id).each do |field| %>
+                  <tr>
+                    <td class="font-medium text-gray-900"><%= field.friendly_name %></td>
+                    <td class="mono text-gray-600"><%= field.title %></td>
+                    <td><span class="badge badge-neutral"><%= field.field_type.humanize %></span></td>
+                    <td class="text-gray-600">
+                      <% if field.description.present? %>
+                        <p><%= field.description %></p>
+                      <% end %>
+                      <% if field.enum_options.present? %>
+                        <p class="mt-1 flex flex-wrap gap-1">
+                          <% field.enum_options.each do |option| %>
+                            <span class="mono rounded bg-gray-100 px-1.5 py-0.5 text-gray-700"><%= option %></span>
+                          <% end %>
+                        </p>
+                      <% end %>
+                      <% if field.minimum.present? || field.maximum.present? %>
+                        <p class="mt-1 num text-gray-500">
+                          Range <%= field.minimum.presence || "−∞" %> to <%= field.maximum.presence || "∞" %>
+                        </p>
+                      <% end %>
+                      <% if field.description.blank? && field.enum_options.blank? && field.minimum.blank? && field.maximum.blank? %>
+                        <span class="text-gray-400">—</span>
+                      <% end %>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        <% else %>
+          <p class="px-5 sm:px-6 py-4 text-sm text-gray-500">This page has no fields yet.</p>
+        <% end %>
+      </section>
+    <% end %>
+  </div>
+<% else %>
+  <div class="card">
+    <%= render "shared/empty_state",
+          title: "No pages yet",
+          body: "Pages hold the fields the AI fills in. Add the first one in the template builder.",
+          cta: (link_to("Edit template", edit_template_path(@template), class: "btn btn-primary") if policy(@template).update?) %>
+  </div>
+<% end %>

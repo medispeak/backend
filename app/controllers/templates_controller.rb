@@ -1,18 +1,42 @@
 class TemplatesController < ApplicationController
-  before_action :authenticate_user!
-  before_action :set_template, only: [ :show, :edit, :update, :destroy ]
+  # The only sortable columns templates actually has. The index previously
+  # offered sort links for :title, :fqdn and :autofill — none of them columns.
+  SORT_COLUMNS = %w[name created_at].freeze
 
-  after_action :verify_authorized
-  rescue_from Pundit::NotAuthorizedError, with: :user_not_authorized
+  before_action :set_template, only: [ :show, :edit, :update, :destroy ]
 
   # GET /templates
   def index
-    @pagy, @templates = pagy(policy_scope(Template).sort_by_params(params[:sort], sort_direction))
-    authorize @templates
+    @sort = params[:sort].presence_in(SORT_COLUMNS) || "created_at"
+    @direction = sort_direction
+
+    scope = policy_scope(Template).order(@sort => @direction)
+
+    begin
+      @pagy, @templates = pagy(scope)
+    rescue Pagy::VariableError
+      # A stale bookmark or a hand-edited ?page= (past the last page, zero,
+      # negative, non-numeric) is a bad URL, not a 500. Pagy raises
+      # OverflowError / VariableError for all of those; fall back to page one.
+      @pagy, @templates = pagy(scope, page: 1)
+    end
+
+    # Page and field counts for the listed rows only: two grouped queries
+    # instead of an N+1 per template.
+    template_ids = @templates.map(&:id)
+    @page_counts = Page.where(template_id: template_ids).group(:template_id).count
+    @field_counts = FormField.joins(:page)
+                             .where(pages: { template_id: template_ids })
+                             .group("pages.template_id").count
   end
 
   # GET /templates/1
   def show
+    # Ordered explicitly: a template's pages are a sequence (History, then
+    # Examination…) and an unordered select returns them in whatever physical
+    # order Postgres happens to hold, which changes after an edit. Loaded up
+    # front so the view's `size` does not add a COUNT round trip.
+    @pages = @template.pages.includes(:form_fields).order(:id).load
   end
 
   # GET /templates/new
@@ -51,8 +75,15 @@ class TemplatesController < ApplicationController
 
   # DELETE /templates/1
   def destroy
+    template_id = @template.id
+    page_ids = @template.pages.pluck(:id)
     @template.destroy
-    redirect_to templates_path, notice: "Template deleted."
+    # ModelAssignment addresses its scope by (scope_type, scope_id) rather than
+    # by association, so nothing cascades: clear this template's rows here — and
+    # its pages' rows too, since the pages are destroyed along with it.
+    ModelAssignment.where(scope_type: "Template", scope_id: template_id).delete_all
+    ModelAssignment.where(scope_type: "Page", scope_id: page_ids).delete_all if page_ids.any?
+    redirect_to templates_path, notice: "Template deleted.", status: :see_other
   end
 
   private
@@ -61,7 +92,7 @@ class TemplatesController < ApplicationController
     @template = Template.find(params[:id])
     authorize @template
   rescue ActiveRecord::RecordNotFound
-    redirect_to templates_path
+    redirect_to templates_path, alert: "That template no longer exists."
   end
 
   def template_params
