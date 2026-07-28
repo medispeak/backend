@@ -1,3 +1,9 @@
+# Rails parses this whole file whenever Active Storage configures itself, not
+# just the entry named by config.active_storage.service. Every credential below
+# is therefore read with ENV[...] rather than ENV.fetch(...): a missing AWS key
+# must not raise while the app is running on Disk. Otherwise any environment
+# without S3 credentials — CI, and the asset-precompile step of the Docker build
+# — dies on a service it never uses.
 test:
   service: Disk
   root: <%= Rails.root.join("tmp/storage") %>
@@ -6,39 +12,18 @@ local:
   service: Disk
   root: <%= Rails.root.join("storage") %>
 
-# Use bin/rails credentials:edit to set the AWS secrets (as aws:access_key_id|secret_access_key)
 amazon:
   service: S3
-  access_key_id: <%= ENV.fetch('AWS_ACCESS_KEY_ID') %>
-  secret_access_key: <%= ENV.fetch('AWS_SECRET_ACCESS_KEY') %>
-  region: <%= ENV.fetch('AWS_REGION') %>
-  bucket: <%= ENV.fetch('AWS_BUCKET') %>
+  access_key_id: <%= ENV["AWS_ACCESS_KEY_ID"] %>
+  secret_access_key: <%= ENV["AWS_SECRET_ACCESS_KEY"] %>
+  region: <%= ENV["AWS_REGION"] %>
+  bucket: <%= ENV["AWS_BUCKET"] %>
 
-# Use bin/rails credentials:edit to set the MinIO secrets (as minio:access_key_id|secret_access_key)
 minio:
   service: S3
-  bucket: <%= ENV.fetch('MINIO_BUCKET') || 'application' %>
-  endpoint: <%= ENV.fetch('MINIO_ENDPOINT') || 'https://localhost:9000' %>
-  access_key_id: <%= ENV.fetch('MINIO_ACCESS_KEY_ID') || 'minioadmin' %>
-  secret_access_key: <%= ENV.fetch('MINIO_SECRET_ACCESS_KEY') || 'minioadmin' %>
-  region: <%= ENV.fetch('MINIO_REGION') || 'us-east-1' %>
+  bucket: <%= ENV["MINIO_BUCKET"] || "application" %>
+  endpoint: <%= ENV["MINIO_ENDPOINT"] || "https://localhost:9000" %>
+  access_key_id: <%= ENV["MINIO_ACCESS_KEY_ID"] || "minioadmin" %>
+  secret_access_key: <%= ENV["MINIO_SECRET_ACCESS_KEY"] || "minioadmin" %>
+  region: <%= ENV["MINIO_REGION"] || "us-east-1" %>
   force_path_style: true
-
-# Remember not to checkin your GCS keyfile to a repository
-# google:
-#   service: GCS
-#   project: your_project
-#   credentials: <%= Rails.root.join("path/to/gcs.keyfile") %>
-#   bucket: your_own_bucket-<%= Rails.env %>
-
-# Use bin/rails credentials:edit to set the Azure Storage secret (as azure_storage:storage_access_key)
-# microsoft:
-#   service: AzureStorage
-#   storage_account_name: your_account_name
-#   storage_access_key: <%= Rails.application.credentials.dig(:azure_storage, :storage_access_key) %>
-#   container: your_container_name-<%= Rails.env %>
-
-# mirror:
-#   service: Mirror
-#   primary: local
-#   mirrors: [ amazon, google, microsoft ]

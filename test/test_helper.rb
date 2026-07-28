@@ -1,4 +1,12 @@
 ENV["RAILS_ENV"] ||= "test"
+
+# The suite must not depend on ambient credentials: it should pass on a clean
+# checkout with no .env and no CI secrets. Outbound HTTP is blocked by WebMock
+# below, so these placeholders are never used against a real provider — they
+# exist because the OpenAI client refuses to build without a token. A real value
+# in the environment still wins.
+ENV["OPENAI_ACCESS_TOKEN"] ||= "test-openai-token"
+
 require_relative "../config/environment"
 require "rails/test_help"
 require "webmock/minitest"
