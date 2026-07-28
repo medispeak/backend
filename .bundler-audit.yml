@@ -1,0 +1,20 @@
+# Advisories bundler-audit should not fail the build on, with the reason each is
+# not exploitable here. Review this list whenever Devise is upgraded — the right
+# resolution is to move to Devise >= 5.0.4 deliberately, with the auth flows
+# re-tested, rather than to carry these entries forever.
+#
+# Both advisories are in Devise 4.9.4 and both live in modules this application
+# does not enable. app/models/user.rb declares exactly:
+#
+#   devise :database_authenticatable, :registerable,
+#          :recoverable, :rememberable, :validatable
+#
+# There is no :confirmable and no :timeoutable, so neither code path is reachable.
+ignore:
+  # Confirmable "change email" race condition permits confirming an email the
+  # user has no access to. Requires :confirmable, which is not enabled.
+  - GHSA-57hq-95w6-v4fc
+
+  # Open redirect via unvalidated request.referrer in the Timeoutable session
+  # timeout handler. Requires :timeoutable, which is not enabled.
+  - GHSA-jp94-3292-c3xv
