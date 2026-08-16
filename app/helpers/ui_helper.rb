@@ -52,6 +52,24 @@ module UiHelper
     minutes.positive? ? "#{minutes}m #{secs}s" : "#{secs}s"
   end
 
+  # Media time, which is a different job from format_duration: "4m 12s" reads
+  # well in a table of measured quantities, but a position on a timeline is
+  # read against a clock, and "4:12" is how every player on earth writes it.
+  # Mirrors the same function in audio_player_controller.js.
+  def format_clock(seconds)
+    total = seconds.to_f.floor
+    return "0:00" if total.negative?
+
+    hours, rest = total.divmod(3600)
+    minutes, secs = rest.divmod(60)
+
+    if hours.positive?
+      format("%d:%02d:%02d", hours, minutes, secs)
+    else
+      format("%d:%02d", minutes, secs)
+    end
+  end
+
   def format_tokens(count)
     number_with_delimiter(count.to_i)
   end

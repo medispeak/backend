@@ -63,6 +63,11 @@
   </ol>
 </section>
 
+<%# Above the transcript, because hearing it is the check on reading it. %>
+<% if @scribe_session.audio_available? %>
+  <%= render "scribe_sessions/recording", scribe_session: @scribe_session %>
+<% end %>
+
 <%#
   --- Transcript ------------------------------------------------------------
   An OCR session stores its extracted text in the same Transcript row, so this

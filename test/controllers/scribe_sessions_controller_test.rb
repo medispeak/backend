@@ -204,6 +204,59 @@ class ScribeSessionsControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/no longer stored/, response.body)
   end
 
+  # --- Recording -------------------------------------------------------------
+
+  test "show offers a player for a stored recording" do
+    @session.audio_files.attach(io: StringIO.new("audio"), filename: "c.mp3", content_type: "audio/mpeg")
+    file = @session.audio_files_attachments.first
+
+    sign_in @user
+    get scribe_session_path(@session)
+
+    assert_response :success
+    assert_match "Recording", response.body
+    assert_select "[data-controller=audio-player]"
+    assert_select "audio[src=?]", scribe_session_audio_path(@session, source: "file", source_id: file.id)
+  end
+
+  # The streaming path's clips are timed and transcribed, which is what makes
+  # the transcript usable as an index into the audio.
+  test "show lists the speech segments as seek points" do
+    %w[first second].each_with_index do |text, seq|
+      segment = @session.transcript_segments.create!(seq: seq, status: "done", duration_seconds: 3.0, text: text)
+      segment.data.attach(io: StringIO.new("wav"), filename: "#{seq}.wav", content_type: "audio/wav")
+    end
+
+    sign_in @user
+    get scribe_session_path(@session)
+
+    assert_response :success
+    assert_match "2 speech segments", response.body
+    assert_select "button.ap-row", count: 2
+    # 3s + 3s, printed as media time rather than as a measured quantity.
+    assert_match "0:06", response.body
+  end
+
+  test "show has no player when nothing was recorded" do
+    sign_in @user
+    get scribe_session_path(@session)
+
+    assert_response :success
+    assert_select "[data-controller=audio-player]", count: 0
+  end
+
+  # A document session has text, never speech.
+  test "show has no player for an uploaded document" do
+    document = create(:scribe_session, account: @account, user: @user, modality: "document")
+    document.document_files.attach(io: StringIO.new("%PDF-"), filename: "labs.pdf", content_type: "application/pdf")
+
+    sign_in @user
+    get scribe_session_path(document)
+
+    assert_response :success
+    assert_select "[data-controller=audio-player]", count: 0
+  end
+
   test "show denies another account's session" do
     sign_in @user
     get scribe_session_path(@other_session)

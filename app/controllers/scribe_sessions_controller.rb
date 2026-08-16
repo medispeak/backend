@@ -42,10 +42,15 @@ class ScribeSessionsController < ApplicationController
   private
 
   def set_scribe_session
+    # The segments' own attachments are preloaded too: the player asks each
+    # segment whether it has audio, which is one query per segment otherwise —
+    # and a long consultation has dozens.
     @scribe_session = ScribeSession
                         .with_attached_audio_files
                         .with_attached_document_files
-                        .includes(:transcript, :transcript_segments, :usage_events, scribe_outputs: :page)
+                        .includes(:transcript, :usage_events,
+                                  transcript_segments: { data_attachment: :blob },
+                                  scribe_outputs: :page)
                         .find(params[:id])
     authorize @scribe_session
   end
