@@ -273,12 +273,11 @@ openai_provider = AiProvider.find_or_create_by!(name: "OpenAI") do |p|
   p.organization_id = ENV["OPENAI_ORGANIZATION_ID"] if ENV["OPENAI_ORGANIZATION_ID"].present?
 end
 
-openrouter_provider = AiProvider.find_or_create_by!(name: "OpenRouter") do |p|
-  p.kind = "openai_compatible"
-  p.base_url = "https://openrouter.ai/api/"
-  # OPENROUTER_API_KEY may be absent; create with placeholder so it shows in UI.
-  p.api_key = ENV["OPENROUTER_API_KEY"].presence || "set-your-openrouter-api-key"
-end
+# OpenRouter: the provider row plus the ASR (dedicated STT endpoint) and
+# structuring model catalog + prices, from lib/openrouter_catalog.rb (shared
+# with the ProvisionOpenrouterModels data migration). Key from ENV or a
+# placeholder so the row shows in the UI.
+openrouter_provider = OpenrouterCatalog.provision!
 
 anthropic_provider = AiProvider.find_or_create_by!(name: "Anthropic") do |p|
   p.kind = "anthropic"
