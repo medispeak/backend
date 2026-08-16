@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_16_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_17_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -267,6 +267,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_16_110000) do
     t.index ["api_token_id"], name: "index_scribe_sessions_on_api_token_id"
     t.index ["user_id"], name: "index_scribe_sessions_on_user_id"
   end
+
+  add_check_constraint "scribe_sessions", "document_pages >= 0 AND document_pages <= 20", name: "scribe_sessions_document_pages_within_cap", validate: false
 
   create_table "scribe_transcript_segments", force: :cascade do |t|
     t.string "content_type"
