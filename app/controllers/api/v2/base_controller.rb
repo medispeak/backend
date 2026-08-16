@@ -36,24 +36,27 @@ module Api
         head :unauthorized
       end
 
-      # Memoized active-token resolution (digest lookup + active/expiry scope
-      # enforced inside ApiToken.authenticate).
-      def current_api_token
-        return @current_api_token if defined?(@current_api_token)
-
-        @current_api_token = ApiToken.authenticate(bearer_token)
+      # The caller, resolved once per request and shared with Rack::Attack (see
+      # Api::Credential) so throttling and authorization do not each pay for the
+      # same lookups.
+      def credential
+        @credential ||= Api::Credential.for(request)
       end
 
-      # Memoized scoped session-token claims (`{ "sid" => Integer, "scope" =>
-      # [...] }`) or nil. Verification is a signature+expiry check — no DB row.
-      def current_session_claims
-        return @current_session_claims if defined?(@current_session_claims)
+      # Active account token (digest lookup + active/expiry scope enforced
+      # inside ApiToken.authenticate), or nil.
+      def current_api_token
+        credential.api_token
+      end
 
-        @current_session_claims = Scribe::SessionToken.verify(bearer_token)
+      # Scoped session-token claims (`{ "sid" => Integer, "scope" => [...] }`)
+      # or nil. Verification is a signature+expiry check — no DB row.
+      def current_session_claims
+        credential.session_claims
       end
 
       def current_account
-        current_api_token&.account
+        credential.account
       end
 
       # Account-only actions (create/index/tokens/config/usage) call this so a
