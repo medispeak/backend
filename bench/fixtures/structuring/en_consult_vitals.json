@@ -1,0 +1,32 @@
+{
+  "id": "en_consult_vitals",
+  "title": "English: general consult with vitals",
+  "language": "en",
+  "system_prompt": null,
+  "transcript": "Okay, come in, sit down. So you've had fever for what, three days now, and cough. Any headache? Yes doctor, some headache in the evenings, but no sore throat. Alright, let me check you. Temperature is 101.2. Pulse is 92. BP is 120 over, no wait, let me take that again. 130 over 85. Yes, 130 over 85. Oxygen saturation is 97 percent, that's fine. Chest is clear on both sides. Nothing to worry about, this looks like a viral fever. I'm going to give you paracetamol 650 mg, one tablet three times a day after food for three days. Drink lots of water. Do you smoke? No, never. Good. Come back after three days if the fever doesn't settle, or earlier if you feel breathless. And how is your mother doing after her surgery? Oh, she's much better now, thank you doctor.",
+  "fields": [
+    { "key": "chief_complaint", "label": "Chief complaint", "description": "The main reason for the visit, in the patient's words", "type": "string" },
+    { "key": "symptoms", "label": "Symptoms", "description": "All symptoms the patient reports having", "type": "multi_select", "enum": ["Fever", "Cough", "Headache", "Body pain", "Sore throat", "Breathlessness"] },
+    { "key": "temperature_f", "label": "Temperature", "description": "Body temperature recorded at the visit in degrees Fahrenheit", "type": "number", "minimum": 95, "maximum": 108 },
+    { "key": "systolic_bp", "label": "Systolic BP", "description": "Systolic blood pressure in mmHg", "type": "number", "minimum": 50, "maximum": 250 },
+    { "key": "diastolic_bp", "label": "Diastolic BP", "description": "Diastolic blood pressure in mmHg", "type": "number", "minimum": 30, "maximum": 150 },
+    { "key": "provisional_diagnosis", "label": "Provisional diagnosis", "type": "single_select", "enum": ["Viral fever", "Bacterial infection", "Allergic rhinitis", "Other"] },
+    { "key": "smoker", "label": "Smoker", "description": "Whether the patient currently smokes", "type": "boolean" },
+    { "key": "follow_up_days", "label": "Follow-up in days", "description": "Number of days after which the patient was asked to return", "type": "number", "minimum": 0, "maximum": 365 },
+    { "key": "weight_kg", "label": "Weight", "description": "Body weight in kilograms", "type": "number", "minimum": 1, "maximum": 300 }
+  ],
+  "expected": {
+    "chief_complaint": "fever and cough for three days",
+    "symptoms": ["Fever", "Cough", "Headache"],
+    "temperature_f": 101.2,
+    "systolic_bp": 130,
+    "diastolic_bp": 85,
+    "provisional_diagnosis": "Viral fever",
+    "smoker": false,
+    "follow_up_days": 3,
+    "weight_kg": null
+  },
+  "scoring": {
+    "chief_complaint": "contains:fever"
+  }
+}

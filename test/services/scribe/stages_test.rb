@@ -75,6 +75,39 @@ class StructuringStageTest < Minitest::Test
     assert_requested :post, CHAT_URL, times: 2 # exactly one repair, not a loop
   end
 
+  # Every field is optional (core schema `required: []`) and the OpenAI strict
+  # transform makes each one nullable so the model can say "not in the
+  # transcript". The validation schema must accept those nulls too — otherwise
+  # each absent field costs a repair round-trip and a :partial output.
+  def test_null_for_an_absent_field_is_valid_without_a_repair_call
+    select = StageField.new(title: "sev", friendly_name: "Severity", field_type: "single_select",
+                            enum_options: %w[Mild Severe])
+    multi = StageField.new(title: "sx", friendly_name: "Symptoms", field_type: "multi_select",
+                           enum_options: %w[Fever Cough])
+    flag = StageField.new(title: "smoker", friendly_name: "Smoker", field_type: "boolean")
+    st = Scribe::StructuringStage.new(config: config, fields: fields + [ select, multi, flag ])
+    stub_request(:post, CHAT_URL).to_return(
+      chat_stub({ "age" => nil, "name" => "Jane", "sev" => nil, "sx" => nil, "smoker" => nil })
+    )
+
+    result = st.call("patient named jane")
+
+    assert result.valid, result.errors.inspect
+    assert_nil result.structured["age"]
+    assert_requested :post, CHAT_URL, times: 1
+  end
+
+  def test_repair_call_usage_is_summed_into_the_result
+    stub_request(:post, CHAT_URL).to_return(
+      chat_stub({ "age" => 200, "name" => "Jane" }),
+      chat_stub({ "age" => 100, "name" => "Jane" })
+    )
+    result = stage.call("...")
+    assert result.valid
+    assert_equal 10, result.usage.input_tokens, "5 + 5 across both calls"
+    assert_equal 4, result.usage.output_tokens
+  end
+
   def test_finish_reason_length_raises
     stub_request(:post, CHAT_URL).to_return(chat_stub({ "age" => 30 }, finish: "length"))
     assert_raises(Llm::BadResponse) { stage.call("...") }

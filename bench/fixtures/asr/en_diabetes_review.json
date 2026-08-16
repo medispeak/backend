@@ -1,0 +1,24 @@
+{
+  "id": "en_diabetes_review",
+  "title": "English: type 2 diabetes review",
+  "language": "en",
+  "code_mix": false,
+  "turns": [
+    {
+      "speaker": "doctor",
+      "text": "Hello Ramesh. How has your sugar been since the last visit?"
+    },
+    {
+      "speaker": "patient",
+      "text": "Not great, doctor. My fasting sugar this morning was 165."
+    },
+    {
+      "speaker": "doctor",
+      "text": "And what are you taking now?"
+    },
+    {
+      "speaker": "patient",
+      "text": "Metformin 500 mg twice a day, after breakfast and dinner."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "en_fever_followup",
+  "title": "English: fever follow-up",
+  "language": "en",
+  "code_mix": false,
+  "turns": [
+    {
+      "speaker": "doctor",
+      "text": "Good morning. What brings you in today?"
+    },
+    {
+      "speaker": "patient",
+      "text": "I have had fever and cough for three days, doctor."
+    },
+    {
+      "speaker": "doctor",
+      "text": "Any body pain or sore throat?"
+    },
+    {
+      "speaker": "patient",
+      "text": "Some body pain. The fever touches 102 at night."
+    },
+    {
+      "speaker": "doctor",
+      "text": "Your temperature is 101 now and BP is 120 over 80. Chest is clear."
+    }
+  ]
+}

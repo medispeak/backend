@@ -1,0 +1,102 @@
+{
+  "id": "en_diabetes_meds",
+  "title": "English: diabetes review with medication change",
+  "language": "en",
+  "system_prompt": null,
+  "transcript": "Morning Ramesh, sit down. So how has the sugar been? Well doctor, I've been checking at home. Fasting was around 160, 165 most days, and this morning it was 172. Hmm, that's high. And after food? Around 240, two hours after lunch. Okay. What are you taking right now? Metformin 500 twice a day, and the, uh, glimepiride 1 mg in the morning. Any low sugar episodes, sweating, shakiness? No, nothing like that. Good. Weight today is 82 kilos, last time it was 84. BP is 128 over 82. Alright, your HbA1c from last week is 8.4, so we need to tighten this. I'm going to increase metformin to 1000 mg twice a day, and keep glimepiride the same at 1 mg. Cut the rice portion in half, no sweets, and walk thirty minutes every day. Come back in, let's say two months, actually no, make it three months, with a repeat HbA1c. Sure doctor.",
+  "fields": [
+    {
+      "key": "fasting_glucose",
+      "label": "Fasting glucose",
+      "description": "Most recent fasting blood glucose reported, in mg/dL",
+      "type": "number",
+      "minimum": 40,
+      "maximum": 600
+    },
+    {
+      "key": "hba1c",
+      "label": "HbA1c",
+      "description": "Glycated haemoglobin as a percentage",
+      "type": "number",
+      "minimum": 3,
+      "maximum": 20
+    },
+    {
+      "key": "current_medications",
+      "label": "Current diabetes medications",
+      "description": "Diabetes medicines the patient is taking before any change made today",
+      "type": "multi_select",
+      "enum": [
+        "Metformin",
+        "Glimepiride",
+        "Insulin",
+        "Sitagliptin",
+        "Empagliflozin"
+      ]
+    },
+    {
+      "key": "metformin_new_dose_mg",
+      "label": "New metformin dose",
+      "description": "Metformin dose per administration after today's change, in mg",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 3000
+    },
+    {
+      "key": "hypoglycemia_episodes",
+      "label": "Hypoglycemia episodes",
+      "description": "Whether the patient reported any low sugar episodes",
+      "type": "boolean"
+    },
+    {
+      "key": "weight_kg",
+      "label": "Weight",
+      "description": "Body weight recorded today in kilograms",
+      "type": "number",
+      "minimum": 20,
+      "maximum": 300
+    },
+    {
+      "key": "diet_advice",
+      "label": "Diet advice",
+      "description": "Dietary advice given to the patient",
+      "type": "string"
+    },
+    {
+      "key": "follow_up_interval",
+      "label": "Follow-up interval",
+      "type": "single_select",
+      "enum": [
+        "2 weeks",
+        "1 month",
+        "3 months",
+        "6 months"
+      ]
+    },
+    {
+      "key": "insulin_units",
+      "label": "Insulin units",
+      "description": "Total daily insulin dose in units. Leave empty (null) if the patient is not on insulin; do not return 0.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 300
+    }
+  ],
+  "expected": {
+    "fasting_glucose": 172,
+    "hba1c": 8.4,
+    "current_medications": [
+      "Metformin",
+      "Glimepiride"
+    ],
+    "metformin_new_dose_mg": 1000,
+    "hypoglycemia_episodes": false,
+    "weight_kg": 82,
+    "diet_advice": "cut rice portion in half, no sweets",
+    "follow_up_interval": "3 months",
+    "insulin_units": null
+  },
+  "scoring": {
+    "diet_advice": "contains:rice"
+  }
+}

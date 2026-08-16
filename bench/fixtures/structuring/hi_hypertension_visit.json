@@ -1,0 +1,32 @@
+{
+  "id": "hi_hypertension_visit",
+  "title": "Hindi: hypertension follow-up visit",
+  "language": "hi",
+  "system_prompt": "The transcript is a Hindi doctor-patient conversation. Extract the values and return them in English.",
+  "transcript": "आइए शर्मा जी, बैठिए। कैसे हैं आप? जी डॉक्टर साहब, ठीक हूँ, बस कभी-कभी सुबह उठने पर सिर भारी लगता है। दवा ले रहे हैं? हाँ, amlodipine 5 mg रोज सुबह। कोई दिन छूटा तो नहीं? नहीं, रोज लेता हूँ। चलिए BP देखते हैं। 140 बटा... एक मिनट, फिर से लेता हूँ। 150 बटा 95 है। घर पर नापते हैं? हाँ, घर पर भी 145 बटा 90 के आसपास रहता है। नमक कितना खाते हैं? थोड़ा ज्यादा हो जाता है, अचार बहुत पसंद है। हम्म। सिगरेट? नहीं, कभी नहीं पी। वजन 78 किलो है, पिछली बार 80 था। ठीक है, मैं amlodipine बढ़ाकर 10 mg कर रहा हूँ, सुबह एक गोली। नमक और अचार कम कीजिए, और रोज आधा घंटा टहलिए। दो हफ्ते बाद आइए, BP फिर देखेंगे। और हाँ, आपकी बेटी की शादी कैसी रही? बहुत अच्छी रही डॉक्टर साहब, धन्यवाद।",
+  "fields": [
+    { "key": "chief_complaint", "label": "Chief complaint", "description": "The symptom the patient complains of, in English", "type": "string" },
+    { "key": "systolic_bp", "label": "Systolic BP", "description": "Systolic blood pressure measured in the clinic today, in mmHg", "type": "number", "minimum": 50, "maximum": 250 },
+    { "key": "diastolic_bp", "label": "Diastolic BP", "description": "Diastolic blood pressure measured in the clinic today, in mmHg", "type": "number", "minimum": 30, "maximum": 150 },
+    { "key": "current_antihypertensive", "label": "Current antihypertensive", "description": "The blood pressure medicine the patient was already taking", "type": "single_select", "enum": ["Amlodipine", "Telmisartan", "Losartan", "Metoprolol", "None"] },
+    { "key": "new_amlodipine_dose_mg", "label": "New amlodipine dose", "description": "Amlodipine dose after today's change, in mg", "type": "number", "minimum": 0, "maximum": 20 },
+    { "key": "smoker", "label": "Smoker", "description": "Whether the patient smokes", "type": "boolean" },
+    { "key": "lifestyle_advice", "label": "Lifestyle advice", "description": "Lifestyle changes the doctor advised", "type": "multi_select", "enum": ["Reduce salt", "Daily walking", "Weight loss", "Quit smoking", "Reduce alcohol"] },
+    { "key": "follow_up_days", "label": "Follow-up in days", "description": "Number of days after which the patient was asked to return", "type": "number", "minimum": 0, "maximum": 365 },
+    { "key": "fasting_glucose", "label": "Fasting glucose", "description": "Fasting blood glucose in mg/dL", "type": "number", "minimum": 40, "maximum": 600 }
+  ],
+  "expected": {
+    "chief_complaint": "occasional heaviness of the head in the morning",
+    "systolic_bp": 150,
+    "diastolic_bp": 95,
+    "current_antihypertensive": "Amlodipine",
+    "new_amlodipine_dose_mg": 10,
+    "smoker": false,
+    "lifestyle_advice": ["Reduce salt", "Daily walking"],
+    "follow_up_days": 14,
+    "fasting_glucose": null
+  },
+  "scoring": {
+    "chief_complaint": "contains:head"
+  }
+}

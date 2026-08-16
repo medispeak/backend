@@ -45,5 +45,8 @@ For a containerized environment, detailed instructions are available in our [Dev
   the async request lifecycle.
 - [Metering & billing](docs/metering-and-billing.md) — usage events, the price
   book, the credit ledger, quotas/rate limits, and the usage endpoint.
+- [Model benchmark](docs/model-benchmark.md) — `bin/rails bench:asr` /
+  `bench:structuring`: compare ASR and structuring models on synthetic clinical
+  fixtures for accuracy, latency and cost.
 - [Design spec](docs/superpowers/specs/2026-06-24-model-agnostic-medispeak-design.md)
   — the model-agnostic design.

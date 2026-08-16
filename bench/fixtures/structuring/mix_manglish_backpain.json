@@ -1,0 +1,34 @@
+{
+  "id": "mix_manglish_backpain",
+  "title": "Manglish: lower back pain after lifting",
+  "language": "ml",
+  "system_prompt": "The transcript is a Malayalam-English code-mixed (Manglish) doctor-patient conversation. Extract the values and return them in English.",
+  "transcript": "വരൂ, ഇരിക്കൂ. എന്താണ് പ്രശ്നം? ഡോക്ടർ, കഴിഞ്ഞ തിങ്കളാഴ്ച ഒരു heavy cylinder പൊക്കിയപ്പോൾ lower back ൽ ഒരു വേദന തുടങ്ങി. ഇപ്പോൾ ഒരു ആഴ്ച ആയി. വേദന കാലിലേക്ക് ഇറങ്ങുന്നുണ്ടോ? ഇല്ല ഡോക്ടർ, കാലിലേക്ക് ഇല്ല. numbness, tingling ഒന്നും ഇല്ല. കുനിയുമ്പോൾ മാത്രം കൂടും. ten ൽ എത്ര മാർക്ക് കൊടുക്കും ഈ വേദനയ്ക്ക്? ഒരു ഏഴ്... അല്ല, ആറ് ആയിരിക്കും ഡോക്ടർ. bowel, bladder ഒക്കെ normal ആണോ? അതെ, normal ആണ്. മുൻപ് ഇങ്ങനെ വന്നിട്ടുണ്ടോ? ഇല്ല, ആദ്യമായിട്ടാണ്. ഏതെങ്കിലും pain killer കഴിച്ചോ? ഇല്ല, ചൂട് വെച്ചു, അത്ര മാത്രം. ഓക്കേ, straight leg raise negative ആണ്. ഇത് ഒരു muscle strain ആണ്. MRI ഇപ്പോൾ വേണ്ട. ibuprofen 400 mg ദിവസം രണ്ട് നേരം ഭക്ഷണത്തിന് ശേഷം, അഞ്ച് ദിവസം കഴിക്കുക. heavy lifting ഒഴിവാക്കണം, പക്ഷേ bed rest വേണ്ട, നടക്കാം. രണ്ട് ആഴ്ച കഴിഞ്ഞും മാറിയില്ലെങ്കിൽ physiotherapy ആലോചിക്കാം. ശരി ഡോക്ടർ. office ൽ പോകാമോ? പോകാം, പക്ഷേ ഇടയ്ക്ക് എഴുന്നേറ്റ് നടക്കണം. ഓ, പിന്നെ, മകന്റെ exam എങ്ങനെ ഉണ്ടായിരുന്നു? നന്നായിരുന്നു ഡോക്ടർ.",
+  "fields": [
+    { "key": "chief_complaint", "label": "Chief complaint", "description": "The main presenting problem, in English", "type": "string" },
+    { "key": "pain_duration_days", "label": "Pain duration", "description": "How long the pain has been present, in days", "type": "number", "minimum": 0, "maximum": 3650 },
+    { "key": "pain_score", "label": "Pain score", "description": "Pain severity on a 0 to 10 scale as finally stated by the patient", "type": "number", "minimum": 0, "maximum": 10 },
+    { "key": "radiating_to_leg", "label": "Radiating to leg", "description": "Whether the pain radiates down the leg", "type": "boolean" },
+    { "key": "advice", "label": "Advice given", "description": "Advice the doctor gave for now", "type": "multi_select", "enum": ["Avoid heavy lifting", "Bed rest", "Walking allowed", "Physiotherapy referral now", "MRI now"] },
+    { "key": "imaging_ordered", "label": "Imaging ordered", "description": "Imaging ordered at this visit", "type": "single_select", "enum": ["None", "X-ray", "MRI", "CT scan"] },
+    { "key": "medication", "label": "Medication", "description": "Medicine prescribed with dose and frequency", "type": "string" },
+    { "key": "previous_episodes", "label": "Previous episodes", "description": "Whether the patient has had similar back pain before", "type": "boolean" },
+    { "key": "patient_age_years", "label": "Age", "description": "Patient age in years", "type": "number", "minimum": 0, "maximum": 120 }
+  ],
+  "expected": {
+    "chief_complaint": "lower back pain after lifting a heavy cylinder",
+    "pain_duration_days": 7,
+    "pain_score": 6,
+    "radiating_to_leg": false,
+    "advice": ["Avoid heavy lifting", "Walking allowed"],
+    "imaging_ordered": "None",
+    "medication": "ibuprofen 400 mg twice daily after food for five days",
+    "previous_episodes": false,
+    "patient_age_years": null
+  },
+  "scoring": {
+    "chief_complaint": "contains:back",
+    "pain_duration_days": "number_tolerance:1",
+    "medication": "contains:ibuprofen"
+  }
+}
