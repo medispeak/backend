@@ -78,6 +78,13 @@ class SarvamAdapterTest < ActiveSupport::TestCase
     assert_requested(:post, ENDPOINT) { |req| field(req.body, "language_code") == "unknown" }
   end
 
+  test "the portable 'auto' hint also auto-detects (never 'auto-IN')" do
+    stub_ok
+    adapter.transcribe(audio, language: "auto", mode: :transcribe)
+
+    assert_requested(:post, ENDPOINT) { |req| field(req.body, "language_code") == "unknown" }
+  end
+
   test "a 4xx (e.g. audio over the 30s REST cap) maps to BadResponse so Caller falls back" do
     stub_request(:post, ENDPOINT).to_return(
       status: 400, headers: { "Content-Type" => "application/json" },

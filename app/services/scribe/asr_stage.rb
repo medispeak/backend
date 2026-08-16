@@ -12,11 +12,19 @@ module Scribe
       keyword_init: true
     )
 
+    # The API's portable "no hint" value (GET /api/v2/config advertises
+    # languages en/hi/ta/auto). It is not a language code and must never reach
+    # a provider: Sarvam turned it into "auto-IN" and 400'd every segment
+    # (prod session 62, 2026-08-16); Whisper rejects it too.
+    AUTO_DETECT = "auto".freeze
+
     def initialize(config:)
       @config = config
     end
 
     def call(audio_io, language: nil, mode: :transcribe, audio_seconds: 0)
+      language = nil if language.to_s.casecmp?(AUTO_DETECT)
+
       llm = Llm::Caller.transcribe(
         @config, audio_io,
         language: language, mode: mode, audio_seconds: audio_seconds

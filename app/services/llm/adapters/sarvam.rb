@@ -76,8 +76,11 @@ module Llm
 
       # Sarvam wants BCP-47 (e.g. "ml-IN"); "unknown" auto-detects. Pass a full
       # code through untouched, expand a bare ISO code, default to auto-detect.
+      # The portable "auto" hint is auto-detect too (AsrStage already strips
+      # it; guarded here as well because this is the method that would
+      # otherwise fabricate the invalid "auto-IN").
       def sarvam_language(language)
-        return "unknown" if language.blank?
+        return "unknown" if language.blank? || language.to_s.casecmp?("auto")
 
         language.include?("-") ? language : "#{language}-IN"
       end

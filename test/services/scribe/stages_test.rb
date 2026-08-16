@@ -106,4 +106,24 @@ class AsrStageTest < Minitest::Test
   ensure
     file&.close!
   end
+
+  # The API advertises language_hint "auto" (GET /api/v2/config, docs/api/v2.md).
+  # It is a portable "no hint", NOT a language code: passed through, Sarvam
+  # built "auto-IN" and 400'd every segment (prod session 62, 2026-08-16), and
+  # Whisper would reject it too. The stage must drop it before any adapter.
+  def test_language_auto_is_sent_as_no_language_hint
+    stub_request(:post, "https://api.openai.com/v1/audio/transcriptions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: { text: "hello" }.to_json)
+    file = Tempfile.new([ "a", ".mp3" ]); file.write("x"); file.rewind
+
+    res = Scribe::AsrStage.new(config: config).call(file, language: "auto", mode: :transcribe, audio_seconds: 3)
+
+    assert_requested(:post, "https://api.openai.com/v1/audio/transcriptions") do |req|
+      !req.body.include?('name="language"')
+    end
+    assert_nil res.language, "no provider-detected language and no real hint -> nil, never 'auto'"
+  ensure
+    file&.close!
+  end
 end
