@@ -27,11 +27,20 @@ class ConstrainDocumentPages < ActiveRecord::Migration[8.1]
   CAP = 20
 
   def up
+    # Both edges of the constraint, not just the cap: a negative counter (only
+    # reachable by a bad manual write, but the constraint below would make it
+    # permanently unwritable all the same) is clamped to zero.
     over = execute("SELECT count(*) FROM scribe_sessions WHERE document_pages > #{CAP}")
              .first.fetch("count").to_i
     if over.positive?
       say "clamping #{over} scribe_sessions row(s) with document_pages > #{CAP}"
       execute "UPDATE scribe_sessions SET document_pages = #{CAP} WHERE document_pages > #{CAP}"
+    end
+    under = execute("SELECT count(*) FROM scribe_sessions WHERE document_pages < 0")
+              .first.fetch("count").to_i
+    if under.positive?
+      say "clamping #{under} scribe_sessions row(s) with document_pages < 0"
+      execute "UPDATE scribe_sessions SET document_pages = 0 WHERE document_pages < 0"
     end
 
     add_check_constraint :scribe_sessions,

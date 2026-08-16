@@ -262,11 +262,11 @@ module Api
           render_error(code: "validation_error", message: "document file is required", status: :unprocessable_entity)
           return
         end
-        content_type = base_audio_type(upload.content_type)
+        content_type = sniffed_document_type(upload)
         unless ScribeSession::ALLOWED_DOCUMENT_TYPES.include?(content_type)
           render_error(
             code: "validation_error",
-            message: "unsupported document content type: #{upload.content_type}",
+            message: "unsupported document content type: #{content_type}",
             status: :unprocessable_entity
           )
           return
@@ -305,7 +305,7 @@ module Api
           # lock, where the claim is serialized against commit's own UPDATE.
           if !session.created? && !session.uploading?
             too_late = true
-          elsif session.document_files.sum { |f| f.blob&.byte_size.to_i } + upload.size.to_i >
+          elsif attached_bytes_of(session, :document_files) + upload.size.to_i >
                 ScribeSession::MAX_DOCUMENT_BYTES
             rejection = "total documents exceed #{ScribeSession::MAX_DOCUMENT_BYTES} bytes"
           elsif session.document_pages + pages > ScribeSession::MAX_DOCUMENT_PAGES
@@ -511,6 +511,21 @@ module Api
           .sum(:byte_size)
       end
 
+      # The same sum for a has_many_attached on ONE record — the session's
+      # document_files. Bounded at 20 attachments (each is at least a page), so
+      # the Ruby-side version was only ever ~20 blob queries — but it ran under
+      # the session row lock, and one round trip there is better than twenty.
+      def attached_bytes_of(record, name)
+        ActiveStorage::Blob
+          .joins(:attachments)
+          .where(active_storage_attachments: {
+            record_type: record.class.polymorphic_name,
+            name: name.to_s,
+            record_id: record.id
+          })
+          .sum(:byte_size)
+      end
+
       # Renders a 409 and returns true when the session's modality does not
       # match the upload surface (audio uploads to a document session or vice
       # versa), so callers can guard with `return if reject_wrong_modality(...)`.
@@ -523,6 +538,31 @@ module Api
           status: :conflict
         )
         true
+      end
+
+      # What an uploaded document actually IS, decided from its bytes.
+      #
+      # The multipart Content-Type is a client claim, and everything downstream
+      # of this action disagrees with it: Active Storage re-identifies the blob
+      # from its magic bytes on attach (Blob#unfurl, identify: true) and the
+      # orchestrator hands the provider `blob.content_type`. So a multi-page PDF
+      # declared as image/jpeg would have been counted as ONE page here (images
+      # count as one), stored as application/pdf, and OCR'd as the whole PDF —
+      # under the 20-page cap, the per-page credit hold, per-page metering and
+      # the page-sized output budget, all of which this action exists to size.
+      # Sniffing with the same Marcel call Active Storage uses means the
+      # allowlist, the page count and the stored type all describe one file.
+      # It also turns "a GIF declared as image/jpeg" into a clean 422 here
+      # rather than a model validation failure (and 500) inside the lock below.
+      def sniffed_document_type(upload)
+        upload.tempfile.rewind
+        Marcel::MimeType.for(
+          upload.tempfile,
+          name: upload.original_filename.to_s,
+          declared_type: base_audio_type(upload.content_type)
+        ).to_s
+      ensure
+        upload.tempfile.rewind if upload.tempfile.respond_to?(:rewind)
       end
 
       # Page count for one uploaded document: pdf-reader for PDFs (nil when the

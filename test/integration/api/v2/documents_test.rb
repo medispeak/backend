@@ -1,4 +1,5 @@
 require "test_helper"
+require "mocha/minitest"
 
 module Api
   module V2
@@ -109,6 +110,116 @@ module Api
         assert_response :unprocessable_entity
       end
 
+      # ── the type is what the bytes say ───────────────────────────────────
+
+      # The multipart Content-Type is a client claim. Active Storage stores the
+      # sniffed type and the provider receives it, so counting pages by the
+      # DECLARED type let a 3-page PDF calling itself image/jpeg through as one
+      # page — under the cap, the hold and per-page metering — and then be OCR'd
+      # as the whole PDF.
+      test "a PDF declared as an image is counted and stored as a PDF" do
+        session_id = create_document_session
+        file = Tempfile.new([ "scan", ".jpg" ])
+        file.binmode
+        file.write(minimal_pdf(pages: 3))
+        file.rewind
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: Rack::Test::UploadedFile.new(file.path, "image/jpeg") },
+             headers: @headers
+
+        assert_response :ok
+        assert_equal 3, JSON.parse(response.body)["pages"], "counted by the declared type, not the bytes"
+        assert_equal "application/pdf", ScribeSession.find(session_id).document_files.first.blob.content_type
+      end
+
+      # The mirror image: allowed on the label, disallowed in the bytes. Before
+      # sniffing this passed the allowlist, then failed the model's content_type
+      # validation inside the row lock and 500'd.
+      test "a file whose bytes are not an allowed type is a 422 whatever it claims to be" do
+        session_id = create_document_session
+        file = Tempfile.new([ "scan", ".jpg" ])
+        file.binmode
+        file.write("GIF89a\x01\x00\x01\x00\x00\x00\x00;")
+        file.rewind
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: Rack::Test::UploadedFile.new(file.path, "image/jpeg") },
+             headers: @headers
+
+        assert_response :unprocessable_entity
+        body = JSON.parse(response.body)
+        assert_equal "validation_error", body.dig("error", "code")
+        assert_match(/image\/gif/, body.dig("error", "message"))
+        assert_equal 0, ScribeSession.find(session_id).document_files.count
+      end
+
+      # ── the lock's own guards ────────────────────────────────────────────
+
+      test "uploading to a session that has already been committed is a 409" do
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 1) }, headers: @headers
+        assert_response :ok
+        ScribeSession.find(session_id).update!(status: "processing")
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 1) }, headers: @headers
+
+        assert_response :conflict
+        body = JSON.parse(response.body)
+        assert_equal "validation_error", body.dig("error", "code")
+        assert_match(/from status processing/, body.dig("error", "message"))
+        assert_equal 1, ScribeSession.find(session_id).document_pages
+      end
+
+      test "the byte cap is enforced across separate uploads" do
+        session_id = create_document_session
+        # A stored blob whose recorded size sits just under the session ceiling,
+        # without pushing 20 MB through the request: the cap is a sum over blob
+        # byte_size, which is exactly what this exercises.
+        big = ActiveStorage::Blob.create_and_upload!(
+          io: StringIO.new(minimal_pdf(pages: 1)), filename: "big.pdf", content_type: "application/pdf"
+        )
+        ScribeSession.find(session_id).document_files.attach(big)
+        big.update_column(:byte_size, ScribeSession::MAX_DOCUMENT_BYTES - 16)
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 1) }, headers: @headers
+
+        assert_response :unprocessable_entity
+        body = JSON.parse(response.body)
+        assert_equal "document_upload_failed", body.dig("error", "code")
+        assert_match(/total documents exceed/, body.dig("error", "message"))
+        assert_equal 0, ScribeSession.find(session_id).document_pages, "a rejected upload must not increment"
+      end
+
+      # ── failure surface ──────────────────────────────────────────────────
+
+      # Extraction does more than call a provider, and an internal exception's
+      # message routinely carries SQL, bucket names or paths. The session must
+      # still fail cleanly (outputs failed, session failed, nothing left at
+      # pending) but the client reads a generic message; the real one is logged.
+      test "an internal failure during extraction fails the session with a generic client message" do
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+
+        ActiveStorage::Blob.any_instance.stubs(:download).raises(
+          ActiveRecord::StatementInvalid, "PG::UndefinedColumn: ERROR: column scribe_sessions.secret does not exist"
+        )
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        session = ScribeSession.find(session_id)
+        assert_equal "failed", session.status
+        assert_equal "transcript extraction failed", session.error["message"]
+        assert_equal [ "failure" ], session.scribe_outputs.map(&:status).uniq
+
+        get "/api/v2/scribe_sessions/#{session_id}", headers: @headers
+        assert_no_match(/PG::|UndefinedColumn|secret/, response.body)
+        assert_equal 0, UsageEvent.where(scribe_session_id: session_id).count
+      end
+
       test "modality cross-uploads 409 both ways" do
         doc_session = create_document_session
         post "/api/v2/scribe_sessions/#{doc_session}/audio",
@@ -174,17 +285,22 @@ module Api
       end
 
       test "the page cap is enforced across separate uploads, not just per file" do
+        # Derived from the cap so this keeps testing the boundary if it moves:
+        # each file is under the cap on its own, and together they are over it.
+        first = ScribeSession::MAX_DOCUMENT_PAGES - 5
+        second = 6
+
         session_id = create_document_session
         post "/api/v2/scribe_sessions/#{session_id}/documents",
-             params: { document: pdf_upload(pages: 15) }, headers: @headers
+             params: { document: pdf_upload(pages: first) }, headers: @headers
         assert_response :ok
-        assert_equal 15, JSON.parse(response.body)["pages"]
+        assert_equal first, JSON.parse(response.body)["pages"]
 
         post "/api/v2/scribe_sessions/#{session_id}/documents",
-             params: { document: pdf_upload(pages: 10) }, headers: @headers
+             params: { document: pdf_upload(pages: second) }, headers: @headers
         assert_response :unprocessable_entity
         assert_equal "document_upload_failed", JSON.parse(response.body).dig("error", "code")
-        assert_equal 15, ScribeSession.find(session_id).document_pages, "a rejected upload must not increment"
+        assert_equal first, ScribeSession.find(session_id).document_pages, "a rejected upload must not increment"
       end
 
       # ── completeness + billing ───────────────────────────────────────────
@@ -271,6 +387,74 @@ module Api
         assert_equal 2, events.count, "the abandoned primary attempt was billed to nobody"
         assert_equal %w[failed finalized], events.map(&:status)
         assert_equal 4096, events.first.output_tokens
+      end
+
+      # The primary was billed (truncated 200) and the fallback then failed
+      # outright. The session fails, but the primary's spend must still reach the
+      # ledger: Llm::Caller used to let the fallback's exception escape with the
+      # primary error dropped on the floor.
+      test "a billed primary attempt is metered even when the fallback also fails" do
+        model = create(:ai_model, api_model_id: "gpt-4o-mini")
+        fallback = create(:ai_model, api_model_id: "claude-3-5-sonnet-latest",
+                                     ai_provider: create(:ai_provider, kind: "anthropic",
+                                                                       base_url: "https://api.anthropic.com"))
+        create(:model_assignment, scope_type: "System", scope_id: nil, function: "ocr",
+                                  ai_model: model, fallback_ai_model: fallback)
+
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: "partial" }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json
+        )
+        # Fallback: a transport failure — billed nothing, records nothing.
+        stub_request(:post, "https://api.anthropic.com/v1/messages").to_return(status: 502, body: "bad gateway")
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        assert_equal "failed", ScribeSession.find(session_id).status
+        events = UsageEvent.where(scribe_session_id: session_id, function: "ocr").order(:id)
+        assert_equal 1, events.count, "the billed primary attempt was dropped when the fallback failed"
+        assert_equal "failed", events.first.status
+        assert_equal 4096, events.first.output_tokens
+        assert_equal 2, events.first.pages
+      end
+
+      # Both providers billed us and neither produced a usable report: two
+      # physical attempts, two failed rows, in the order they happened.
+      test "two billed-but-unusable attempts are both metered, in order" do
+        model = create(:ai_model, api_model_id: "gpt-4o-mini")
+        fallback = create(:ai_model, api_model_id: "claude-3-5-sonnet-latest",
+                                     ai_provider: create(:ai_provider, kind: "anthropic",
+                                                                       base_url: "https://api.anthropic.com"))
+        create(:model_assignment, scope_type: "System", scope_id: nil, function: "ocr",
+                                  ai_model: model, fallback_ai_model: fallback)
+
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: "partial" }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json
+        )
+        stub_request(:post, "https://api.anthropic.com/v1/messages").to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { id: "m", type: "message", role: "assistant", stop_reason: "max_tokens",
+                  content: [ { type: "text", text: "also partial" } ],
+                  usage: { input_tokens: 800, output_tokens: 3000 } }.to_json
+        )
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        assert_equal "failed", ScribeSession.find(session_id).status
+        events = UsageEvent.where(scribe_session_id: session_id, function: "ocr").order(:id)
+        assert_equal 2, events.count
+        assert_equal %w[failed failed], events.map(&:status)
+        assert_equal [ 4096, 3000 ], events.map(&:output_tokens), "primary first, then fallback"
+        assert_equal [ "#{session_id}:ocr:0", "#{session_id}:ocr:1" ], events.map(&:dedupe_key)
       end
 
       # A transport failure returned no tokens, so there is nothing to record —
@@ -383,13 +567,26 @@ module Api
         Rack::Test::UploadedFile.new(file.path, "application/pdf")
       end
 
-      # 238 bytes: the /Pages node lists itself as its own kid, so a page-tree
-      # walk with no cycle guard recurses until the stack overflows.
+      # Tiny: the /Pages node lists itself as its own kid, so a page-tree walk
+      # with no cycle guard recurses until the stack overflows.
+      #
+      # The xref offsets are computed from the object strings, never hand-counted:
+      # an offset that lands even one byte inside "2 0 obj" makes pdf-reader
+      # raise MalformedPDFError (a StandardError) BEFORE it ever walks the tree,
+      # and this test then passes for the wrong reason — the SystemStackError
+      # rescue it exists to guard would go unexercised.
       def cyclic_pdf_upload
         header = "%PDF-1.4\n"
-        body = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" \
-               "2 0 obj\n<< /Type /Pages /Kids [2 0 R] /Count 1 >>\nendobj\n"
-        offsets = [ header.bytesize, header.bytesize + 50 ]
+        objects = [
+          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+          "2 0 obj\n<< /Type /Pages /Kids [2 0 R] /Count 1 >>\nendobj\n"
+        ]
+        body = +""
+        offsets = []
+        objects.each do |obj|
+          offsets << (header.bytesize + body.bytesize)
+          body << obj
+        end
         xref_pos = header.bytesize + body.bytesize
         xref = +"xref\n0 3\n0000000000 65535 f \n"
         offsets.each { |o| xref << format("%010d 00000 n \n", o) }
