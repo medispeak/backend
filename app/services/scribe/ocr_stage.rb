@@ -12,7 +12,7 @@ module Scribe
   # the model read off the report.
   class OcrStage
     Result = Struct.new(
-      :text, :pages, :model, :provider, :usage, :raw,
+      :text, :pages, :model, :provider, :usage, :raw, :latency_ms,
       keyword_init: true
     )
 
@@ -37,7 +37,8 @@ module Scribe
         model: llm.model,
         provider: llm.provider,
         usage: usage_with_pages(llm.usage, pages),
-        raw: llm.raw
+        raw: llm.raw,
+        latency_ms: llm.latency_ms
       )
     end
 

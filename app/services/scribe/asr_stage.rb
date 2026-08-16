@@ -9,6 +9,7 @@ module Scribe
   class AsrStage
     Result = Struct.new(
       :text, :language, :duration_seconds, :model, :provider, :usage, :raw,
+      :latency_ms,
       keyword_init: true
     )
 
@@ -40,7 +41,11 @@ module Scribe
         model: llm.model,
         provider: llm.provider,
         usage: llm.usage,
-        raw: llm.raw
+        raw: llm.raw,
+        # Carried through so Metering::UsageRecorder can persist it. Without it
+        # usage_events.latency_ms is NULL for every row and no one can compare
+        # one ASR model against another after the fact.
+        latency_ms: llm.latency_ms
       )
     end
   end

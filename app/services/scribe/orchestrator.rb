@@ -370,8 +370,9 @@ module Scribe
     end
 
     # Adapts a stage result struct to the Llm::Result contract the meter reads.
-    # latency_ms is not surfaced by the stage structs, so it is left nil (the
-    # column is nullable); the metered usage/provider/model are preserved.
+    # The stage structs carry latency_ms (ASR/OCR from the adapter, structuring
+    # timed across the whole stage so a repair re-ask is counted), so it reaches
+    # usage_events; the respond_to? guard remains for any struct that does not.
     def as_llm_result(stage)
       Llm::Result.new(
         text: stage.respond_to?(:text) ? stage.text : nil,

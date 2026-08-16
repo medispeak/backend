@@ -9,6 +9,7 @@ module Scribe
   class StructuringStage
     Result = Struct.new(
       :structured, :usage, :model, :provider, :finish_reason, :valid, :errors,
+      :latency_ms, :repaired,
       keyword_init: true
     )
 
@@ -23,11 +24,19 @@ module Scribe
     end
 
     def call(transcript_text)
+      # Timed over the whole stage rather than taken from llm.latency_ms: a
+      # failed validation triggers a repair re-ask, which is a SECOND provider
+      # round-trip, and the first call's latency would silently undercount the
+      # slowest runs — exactly the ones worth noticing when comparing models.
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      repaired = false
+
       model_schema = builder.call
       llm = Llm::Caller.structure(@config, messages: messages(transcript_text), schema: model_schema)
       guard_completion!(llm)
 
       data, errors = validator.validate_and_repair(llm.structured) do |errs|
+        repaired = true
         repair(transcript_text, model_schema, llm.structured, errs)
       end
 
@@ -38,7 +47,12 @@ module Scribe
         provider: llm.provider,
         finish_reason: llm.finish_reason,
         valid: errors.empty?,
-        errors: errors
+        errors: errors,
+        latency_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
+        # A model that needed a second pass to produce schema-valid JSON is a
+        # weaker fit for this template than one that got it right first time,
+        # even when both end up valid.
+        repaired: repaired
       )
     end
 

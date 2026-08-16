@@ -54,6 +54,32 @@ class StructuringStageTest < Minitest::Test
     assert_equal 5, result.usage.input_tokens
   end
 
+  # latency_ms was silently NULL on every usage_event because the stage structs
+  # never exposed it, so no one could compare one structuring model with
+  # another after the fact.
+  def test_reports_latency_and_no_repair_on_the_happy_path
+    stub_request(:post, CHAT_URL).to_return(chat_stub({ "age" => 30, "name" => "Jane" }))
+    result = stage.call("patient is 30 named jane")
+
+    assert_kind_of Integer, result.latency_ms
+    assert result.latency_ms >= 0
+    refute result.repaired, "a first-time-valid response did not need a repair"
+  end
+
+  # Timed across the whole stage rather than taken from the first provider call,
+  # so the second round-trip a repair costs is actually counted.
+  def test_latency_covers_the_repair_round_trip
+    stub_request(:post, CHAT_URL).to_return(
+      chat_stub({ "age" => 200, "name" => "Jane" }),
+      chat_stub({ "age" => 100, "name" => "Jane" })
+    )
+    result = stage.call("...")
+
+    assert result.repaired, "a repair re-ask fired and should be reported"
+    assert_kind_of Integer, result.latency_ms
+    assert_requested :post, CHAT_URL, times: 2
+  end
+
   def test_repairs_constraint_violation_once
     stub_request(:post, CHAT_URL).to_return(
       chat_stub({ "age" => 200, "name" => "Jane" }), # invalid: > max
@@ -103,6 +129,8 @@ class AsrStageTest < Minitest::Test
     assert_equal 12, res.duration_seconds
     assert_equal "whisper-1", res.model
     assert_equal "en", res.language
+    # Carried from the adapter so Metering::UsageRecorder can persist it.
+    assert_kind_of Integer, res.latency_ms
   ensure
     file&.close!
   end

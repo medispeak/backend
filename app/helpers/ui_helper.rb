@@ -56,6 +56,16 @@ module UiHelper
     number_with_delimiter(count.to_i)
   end
 
+  # Provider round-trip time. Sub-second reads in milliseconds because that is
+  # the resolution that distinguishes two fast models; past a second the decimal
+  # is what matters, not three more digits.
+  def format_latency(milliseconds)
+    ms = milliseconds.to_i
+    return "—" if milliseconds.nil? || ms.zero?
+
+    ms < 1000 ? "#{number_with_delimiter(ms)}ms" : "#{(ms / 1000.0).round(1)}s"
+  end
+
   # A relative time for recent things and an absolute one for old things: "3
   # minutes ago" stops being useful past a day.
   def friendly_time(time)

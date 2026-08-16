@@ -37,11 +37,90 @@
       <dd class="stat-value"><%= format_tokens(total_tokens) %></dd>
     </div>
     <div>
-      <dt class="stat-label">Outputs</dt>
-      <dd class="stat-value"><%= outputs.size %></dd>
+      <dt class="stat-label">Provider time</dt>
+      <%# Summed, not wall-clock: the stages run in sequence, so this is the
+          time the providers themselves accounted for. It excludes queue wait
+          and upload, which is what makes it comparable between two runs. %>
+      <dd class="stat-value"><%= format_latency(session.usage_events.sum { |event| event.latency_ms.to_i }) %></dd>
     </div>
   </dl>
 </section>
+
+<%#
+  Per-stage breakdown — the reason to run this twice with different models.
+
+  Grouped by stage + model rather than listed per event: a streamed recording
+  meters one ASR call PER SEGMENT, so a two-minute consultation would otherwise
+  print fifteen near-identical rows and bury the structuring row that actually
+  varies between models.
+%>
+<% groups = session.usage_events.group_by { |event| [ event.function, event.provider, event.model ] } %>
+<% if groups.any? %>
+  <section class="card">
+    <div class="card-header">
+      <h2 class="text-sm font-semibold text-gray-900">Where the time went</h2>
+      <p class="mt-0.5 text-xs text-gray-500">
+        Run this again after changing a model assignment to compare.
+      </p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Stage</th>
+            <th scope="col">Model</th>
+            <th scope="col" class="text-right">Calls</th>
+            <th scope="col" class="text-right">Time</th>
+            <th scope="col" class="text-right">Tokens</th>
+            <th scope="col" class="text-right">Cost</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <% groups.each do |(function, provider, model), events| %>
+            <% latency = events.sum { |event| event.latency_ms.to_i } %>
+            <tr>
+              <td class="whitespace-nowrap font-medium text-gray-900"><%= capability_name(function) %></td>
+              <td class="mono whitespace-nowrap text-gray-600">
+                <%= [ provider.presence, model.presence ].compact.join(" ").presence || "—" %>
+              </td>
+              <td class="num text-right text-gray-500"><%= events.size %></td>
+              <td class="num whitespace-nowrap text-right text-gray-900">
+                <%= format_latency(latency) %>
+                <%# The per-call average is the comparable number when a
+                    recording was split into many segments. %>
+                <% if events.size > 1 && latency.positive? %>
+                  <span class="block text-xs font-normal text-gray-500">
+                    <%= format_latency(latency / events.size) %> each
+                  </span>
+                <% end %>
+              </td>
+              <td class="num text-right text-gray-700">
+                <%= format_tokens(events.sum { |event| event.total_tokens.to_i }) %>
+              </td>
+              <td class="num text-right text-gray-700">
+                <%= format_cost(events.select(&:finalized?).sum { |event| event.cost || 0 }, precision: 6) %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+
+    <% repaired = outputs.select { |output| Array.wrap(output.result_errors).any? } %>
+    <div class="card-pad border-t border-gray-200">
+      <% if repaired.any? %>
+        <%# Speed is only half the question. A model that returns schema-invalid
+            JSON is a worse fit for this template however fast it was. %>
+        <p class="text-sm text-amber-800">
+          <%= pluralize(repaired.size, "output") %> came back with validation problems — see the errors below.
+          A model that fails schema validation on this template is a worse fit than a faster one that does not.
+        </p>
+      <% else %>
+        <p class="text-sm text-gray-500">Every output validated against your template's schema first time.</p>
+      <% end %>
+    </div>
+  </section>
+<% end %>
 
 <% if session.error.present? %>
   <%# A failed run's reason lives on the session, not only on its outputs — a

@@ -369,9 +369,14 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
   end
 
   # Regression (blocker fix): metering must consume the Llm::Result contract, so
-  # the orchestrator adapts the StructuringStage::Result (which has no
-  # #latency_ms) into one before recording. Without the wrapper, the metering
-  # call raised NoMethodError: undefined method `latency_ms`.
+  # the orchestrator adapts the StructuringStage::Result into one before
+  # recording. Without the wrapper, the metering call raised NoMethodError:
+  # undefined method `latency_ms`.
+  #
+  # This test used to assert the column was NIL, which was true but was the bug,
+  # not the contract: the stage struct simply never carried latency, so every
+  # usage_event in the database had a NULL latency_ms and no one could compare
+  # two models after the fact. The stage now reports it and the column is real.
   test "structuring usage_event records latency_ms column without raising" do
     stub_asr(text: "the patient has a fever")
     stub_chat({ "diagnosis" => "fever", "temperature" => 39 })
@@ -389,9 +394,28 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     structuring_event = UsageEvent.find_by(scribe_session_id: session.id, function: "structuring")
     assert_not_nil structuring_event
     assert_equal form_output.id, structuring_event.scribe_output_id
-    # The stage struct surfaces no latency, so the column is nil (nullable) — the
-    # point is that reading #latency_ms off the wrapped result did not blow up.
-    assert_nil structuring_event.latency_ms
+    # Timed across the whole stage, so a repair re-ask is included.
+    assert_not_nil structuring_event.latency_ms, "structuring latency must reach the meter"
+    assert_kind_of Integer, structuring_event.latency_ms
+    assert_operator structuring_event.latency_ms, :>=, 0
+  end
+
+  # The other half of the same plumbing: ASR carries the adapter's measured
+  # latency through to the meter too, so a session's stages can be compared
+  # against each other and across runs.
+  test "asr usage_event records latency_ms" do
+    stub_asr(text: "the patient has a fever")
+    stub_chat({ "diagnosis" => "fever", "temperature" => 39 })
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    attach_audio(session)
+    create(:scribe_output, scribe_session: session, output_type: "form", page: build_page_with_fields)
+
+    Scribe::Orchestrator.new(session).call
+
+    asr_event = UsageEvent.find_by(scribe_session_id: session.id, function: "asr")
+    assert_not_nil asr_event
+    assert_not_nil asr_event.latency_ms, "ASR latency must reach the meter"
   end
 
   # Regression (major fix): a metering failure AFTER a successful structuring

@@ -156,6 +156,7 @@
             <th scope="col">Function</th>
             <th scope="col">Model</th>
             <th scope="col">Status</th>
+            <th scope="col" class="text-right">Time</th>
             <th scope="col" class="text-right">Tokens</th>
             <th scope="col" class="text-right">Measured</th>
             <th scope="col" class="text-right">Cost</th>
@@ -175,6 +176,9 @@
                 look identical to a settled one.
               %>
               <td><span class="badge <%= usage_badge.fetch(event.status, "badge-neutral") %>"><%= event.status.to_s.humanize %></span></td>
+              <%# How long the provider took. NULL on anything recorded before
+                  latency was plumbed through the stage structs. %>
+              <td class="num whitespace-nowrap text-right text-gray-700"><%= format_latency(event.latency_ms) %></td>
               <td class="num text-right"><%= format_tokens(event.total_tokens) %></td>
               <td class="num whitespace-nowrap text-right text-gray-500">
                 <% if event.audio_seconds.to_f.positive? %>
@@ -193,6 +197,11 @@
         <tfoot class="border-t border-gray-200 bg-gray-50">
           <tr>
             <td class="px-4 py-3 text-sm font-medium text-gray-900" colspan="3">Total</td>
+            <%# Summed, not maxed: the stages run in sequence, so this is the
+                provider time the session actually spent. %>
+            <td class="num px-4 py-3 text-right text-sm font-medium text-gray-900">
+              <%= format_latency(@usage_events.sum { |event| event.latency_ms.to_i }) %>
+            </td>
             <td class="num px-4 py-3 text-right text-sm font-medium text-gray-900">
               <%= format_tokens(@usage_events.sum { |event| event.total_tokens.to_i }) %>
             </td>

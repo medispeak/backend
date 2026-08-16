@@ -189,6 +189,55 @@ class PlaygroundControllerTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", scribe_session_path(session), text: "View as consultation"
   end
 
+  test "result breaks time down per stage and model" do
+    sign_in @user
+    session = ScribeSession.create!(account: @account, user: @user, status: "completed",
+                                    expires_at: 1.hour.from_now)
+    session.scribe_outputs.create!(output_type: "form", status: "success", page: @page,
+                                   result: { "chief_complaint" => "Headache" })
+    # A streamed recording meters one ASR call per segment, so these must be
+    # grouped rather than listed — otherwise the structuring row that actually
+    # varies between models is buried.
+    3.times do
+      create(:usage_event, account: @account, scribe_session_id: session.id,
+                           function: "asr", provider: "sarvam", model: "saaras:v3",
+                           latency_ms: 300, audio_seconds: 10)
+    end
+    create(:usage_event, account: @account, scribe_session_id: session.id,
+                         function: "structuring", provider: "openai", model: "gpt-4.1-mini",
+                         latency_ms: 1400, total_tokens: 900)
+
+    get template_playground_result_path(@template, session_id: session.id)
+
+    assert_response :success
+    assert_select "h2", text: "Where the time went"
+    # Two grouped rows, not four raw ones.
+    assert_select "table.data-table tbody tr", 2
+    assert_select "td", text: /sarvam saaras:v3/
+    assert_select "td", text: /900ms/          # 3 x 300ms, summed
+    assert_select "td", text: /300ms each/     # per-call average
+    assert_select "td", text: /1\.4s/          # structuring, sub-second rounds to ms
+    assert_select "div", text: /validated against your template's schema first time/
+  end
+
+  test "result flags an output that failed schema validation" do
+    sign_in @user
+    session = ScribeSession.create!(account: @account, user: @user, status: "partial",
+                                    expires_at: 1.hour.from_now)
+    session.scribe_outputs.create!(output_type: "form", status: "partial", page: @page,
+                                   result: { "chief_complaint" => "Headache" },
+                                   result_errors: [ { "message" => "age must be <= 120" } ])
+    create(:usage_event, account: @account, scribe_session_id: session.id,
+                         function: "structuring", provider: "openai", model: "gpt-4.1-mini",
+                         latency_ms: 1200)
+
+    get template_playground_result_path(@template, session_id: session.id)
+
+    assert_response :success
+    # Speed alone would recommend the wrong model; validity is the other half.
+    assert_select "p", text: /worse fit than a faster one/
+  end
+
   test "result refuses a session belonging to another account" do
     sign_in @user
     foreign = ScribeSession.create!(account: @other_account, status: "completed", expires_at: 1.hour.from_now)

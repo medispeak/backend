@@ -97,8 +97,10 @@ class TranscribeSegmentJob < ApplicationJob
     nil
   end
 
-  # AsrStage::Result does not respond to #latency_ms; adapt it to the Llm::Result
-  # contract Metering::UsageRecorder consumes (matches Orchestrator#as_llm_result).
+  # Adapts AsrStage::Result to the Llm::Result contract Metering::UsageRecorder
+  # consumes (matches Orchestrator#as_llm_result). Per-segment latency is the
+  # only ASR timing a live recording produces — the whole-file path never runs —
+  # so dropping it here would leave every streamed session with no ASR timing.
   def as_llm_result(result)
     Llm::Result.new(
       text: result.text,
@@ -106,7 +108,7 @@ class TranscribeSegmentJob < ApplicationJob
       model: result.model,
       provider: result.provider,
       usage: result.usage,
-      latency_ms: nil,
+      latency_ms: result.respond_to?(:latency_ms) ? result.latency_ms : nil,
       finish_reason: nil,
       raw: result.respond_to?(:raw) ? result.raw : nil
     )
