@@ -4,7 +4,13 @@ module Scribe
   # revocation rides on the short TTL and the session's own expiry/status.
   module SessionToken
     PREFIX = "mss_"
-    SCOPE = %w[audio read].freeze
+    # The routes a scoped token may reach. Nothing reads this claim yet — the
+    # actual boundary is `sid`, enforced in ScribeSessionsController#find_session,
+    # plus `require_account_token!` on the account-wide actions. It is listed
+    # honestly all the same: a document session's client uploads to /documents,
+    # and a scope that said "audio" while permitting documents would be a trap
+    # for whoever implements enforcement.
+    SCOPE = %w[audio document read].freeze
     DEFAULT_TTL = 15.minutes
 
     module_function

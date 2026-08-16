@@ -262,11 +262,11 @@ module Api
           render_error(code: "validation_error", message: "document file is required", status: :unprocessable_entity)
           return
         end
-        content_type = base_audio_type(upload.content_type)
+        content_type = sniffed_document_type(upload)
         unless ScribeSession::ALLOWED_DOCUMENT_TYPES.include?(content_type)
           render_error(
             code: "validation_error",
-            message: "unsupported document content type: #{upload.content_type}",
+            message: "unsupported document content type: #{content_type}",
             status: :unprocessable_entity
           )
           return
@@ -275,16 +275,6 @@ module Api
           render_error(code: "validation_error", message: "document too large", status: :unprocessable_entity)
           return
         end
-        existing_bytes = session.document_files.sum { |f| f.blob&.byte_size.to_i }
-        if existing_bytes + upload.size.to_i > ScribeSession::MAX_DOCUMENT_BYTES
-          render_error(
-            code: "document_upload_failed",
-            message: "total documents exceed #{ScribeSession::MAX_DOCUMENT_BYTES} bytes",
-            status: :unprocessable_entity
-          )
-          return
-        end
-
         pages = count_pages(upload, content_type)
         if pages.nil?
           render_error(
@@ -294,23 +284,56 @@ module Api
           )
           return
         end
-        if session.document_pages + pages > ScribeSession::MAX_DOCUMENT_PAGES
+
+        # Both cumulative ceilings are read-check-write against state this
+        # request is about to change, and a session token lets one client fire
+        # its uploads concurrently. Unlocked, two requests both read
+        # document_pages = 18, both see 18 + 2 <= 20, and the session lands at 22
+        # — over the cap that sizes the OCR request and the credit hold. Hold the
+        # session row for the whole check-attach-increment so the second request
+        # reads the first one's result. `with_lock` reloads inside the
+        # transaction, so the counts below are the locked row's, not the stale
+        # ones this action was dispatched with.
+        rejection = nil
+        too_late = false
+        session.with_lock do
+          # The status guard above is only a fast path: counting pages can take
+          # up to PDF_PARSE_TIMEOUT_SECONDS, and a commit racing that window
+          # moves the session to :processing and sizes its credit hold on the
+          # pages banked so far. Attaching after that point adds a page the hold
+          # never covered and the OCR call may never see. Re-assert under the
+          # lock, where the claim is serialized against commit's own UPDATE.
+          if !session.created? && !session.uploading?
+            too_late = true
+          elsif attached_bytes_of(session, :document_files) + upload.size.to_i >
+                ScribeSession::MAX_DOCUMENT_BYTES
+            rejection = "total documents exceed #{ScribeSession::MAX_DOCUMENT_BYTES} bytes"
+          elsif session.document_pages + pages > ScribeSession::MAX_DOCUMENT_PAGES
+            rejection = "total pages exceed #{ScribeSession::MAX_DOCUMENT_PAGES}"
+          else
+            session.document_files.attach(
+              io: upload.tempfile.tap(&:rewind),
+              filename: upload.original_filename,
+              content_type: content_type
+            )
+            session.document_pages += pages
+            session.status = "uploading" if session.created?
+            session.save!
+          end
+        end
+
+        if too_late
           render_error(
-            code: "document_upload_failed",
-            message: "total pages exceed #{ScribeSession::MAX_DOCUMENT_PAGES}",
-            status: :unprocessable_entity
+            code: "validation_error",
+            message: "documents cannot be uploaded from status #{session.status}",
+            status: :conflict
           )
           return
         end
-
-        session.document_files.attach(
-          io: upload.tempfile.tap(&:rewind),
-          filename: upload.original_filename,
-          content_type: content_type
-        )
-        session.document_pages += pages
-        session.status = "uploading" if session.created?
-        session.save!
+        if rejection
+          render_error(code: "document_upload_failed", message: rejection, status: :unprocessable_entity)
+          return
+        end
 
         render json: { id: session.id, status: session.status, pages: session.document_pages }, status: :ok
       end
@@ -488,6 +511,21 @@ module Api
           .sum(:byte_size)
       end
 
+      # The same sum for a has_many_attached on ONE record — the session's
+      # document_files. Bounded at 20 attachments (each is at least a page), so
+      # the Ruby-side version was only ever ~20 blob queries — but it ran under
+      # the session row lock, and one round trip there is better than twenty.
+      def attached_bytes_of(record, name)
+        ActiveStorage::Blob
+          .joins(:attachments)
+          .where(active_storage_attachments: {
+            record_type: record.class.polymorphic_name,
+            name: name.to_s,
+            record_id: record.id
+          })
+          .sum(:byte_size)
+      end
+
       # Renders a 409 and returns true when the session's modality does not
       # match the upload surface (audio uploads to a document session or vice
       # versa), so callers can guard with `return if reject_wrong_modality(...)`.
@@ -502,17 +540,87 @@ module Api
         true
       end
 
+      # What an uploaded document actually IS, decided from its bytes.
+      #
+      # The multipart Content-Type is a client claim, and everything downstream
+      # of this action disagrees with it: Active Storage re-identifies the blob
+      # from its magic bytes on attach (Blob#unfurl, identify: true) and the
+      # orchestrator hands the provider `blob.content_type`. So a multi-page PDF
+      # declared as image/jpeg would have been counted as ONE page here (images
+      # count as one), stored as application/pdf, and OCR'd as the whole PDF —
+      # under the 20-page cap, the per-page credit hold, per-page metering and
+      # the page-sized output budget, all of which this action exists to size.
+      # Sniffing with the same Marcel call Active Storage uses means the
+      # allowlist, the page count and the stored type all describe one file.
+      # It also turns "a GIF declared as image/jpeg" into a clean 422 here
+      # rather than a model validation failure (and 500) inside the lock below.
+      def sniffed_document_type(upload)
+        upload.tempfile.rewind
+        Marcel::MimeType.for(
+          upload.tempfile,
+          name: upload.original_filename.to_s,
+          declared_type: base_audio_type(upload.content_type)
+        ).to_s
+      ensure
+        upload.tempfile.rewind if upload.tempfile.respond_to?(:rewind)
+      end
+
       # Page count for one uploaded document: pdf-reader for PDFs (nil when the
       # PDF is encrypted/unparseable — the caller 422s), 1 for images.
+      # Counts the pages of an UNTRUSTED PDF, on a Puma request thread. Two
+      # things make that dangerous, and both are handled here.
+      #
+      # 1. Unbounded work. pdf-reader builds the xref table by reading a subsection
+      #    header out of the file and looping that many times (xref.rb: `count =
+      #    params[1].to_i` then `count.times`). The integer is attacker-supplied
+      #    and Ruby's to_i is unbounded, so a 333-byte upload declaring
+      #    `0 4000000000` spins for hours. With RAILS_MAX_THREADS defaulting to 3,
+      #    three such uploads take down every endpoint for every account. The
+      #    wall-clock bound is the fix; Timeout::Error is a StandardError, so the
+      #    rescue below already turns an expiry into the same clean 422 a
+      #    malformed PDF gets.
+      #
+      # 2. A lying page count. #page_count returns the catalog's self-declared
+      #    /Count, which a hostile file sets to 1 while carrying 500 pages —
+      #    understating itself past MAX_DOCUMENT_PAGES and past the per-page
+      #    credit hold at commit, while still costing 500 pages of vision tokens.
+      #    #pages is no better: it is literally `(1..page_count).map`, so it
+      #    inherits the same lie. Only #page_references walks the real /Pages
+      #    tree, and its length is what the provider will actually process.
+      #    Walking is itself attacker-directed work, which is precisely why it
+      #    runs inside the timeout.
+      #
+      # 3. Unbounded MEMORY, which the timeout does not touch. Every compressed
+      #    stream pdf-reader reads — the xref stream in PDF::Reader.new, the
+      #    object streams the tree walk visits — is inflated with no output cap,
+      #    and a few-hundred-byte nested FlateDecode stream decodes to
+      #    gigabytes in milliseconds: the process is OOM-killed long before the
+      #    2s timer fires, and no rescue catches a kernel kill. That bound lives
+      #    in config/initializers/pdf_reader_inflate_cap.rb, which caps each
+      #    inflate and raises MalformedPDFError (a StandardError) instead.
+      PDF_PARSE_TIMEOUT_SECONDS = 2
+
       def count_pages(upload, content_type)
         return 1 unless content_type == "application/pdf"
 
         upload.tempfile.rewind
-        count = PDF::Reader.new(upload.tempfile).page_count
-        upload.tempfile.rewind
+        count = Timeout.timeout(PDF_PARSE_TIMEOUT_SECONDS) do
+          reader = PDF::Reader.new(upload.tempfile)
+          # Cross-checked against the declared count and resolved in favour of
+          # whichever is larger, so neither an understated /Count nor a
+          # truncated tree walk can get a document billed for less than it is.
+          [ reader.objects.page_references.size, reader.page_count.to_i ].max
+        end
         count.positive? ? count : nil
-      rescue StandardError
+      # SystemStackError is caught explicitly because it is NOT a StandardError.
+      # #page_references walks /Kids with no cycle guard, so a 238-byte PDF whose
+      # /Pages node lists itself as its own kid recurses until the stack blows —
+      # in milliseconds, well inside the timeout. Without this the walk turns a
+      # file the old code accepted into a 500 on a public endpoint.
+      rescue SystemStackError, StandardError
         nil
+      ensure
+        upload.tempfile.rewind if upload.tempfile.respond_to?(:rewind)
       end
 
       # Undo a won commit claim (processing -> its prior committable status).

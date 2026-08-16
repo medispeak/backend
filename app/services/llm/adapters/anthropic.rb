@@ -16,6 +16,10 @@ module Llm
       ANTHROPIC_VERSION = "2023-06-01".freeze
       DEFAULT_MAX_TOKENS = 4096
       TOOL_NAME = "extraction".freeze
+      # Every Claude 3.5+ model accepts at least 8k output tokens; the API 400s a
+      # max_tokens above the model's ceiling. Newer lines allow far more (64k)
+      # and should say so in capabilities.max_output_tokens.
+      DEFAULT_OUTPUT_CEILING = 8_192
 
       # Anthropic exposes no audio transcription endpoint. The capability flag
       # can_transcribe is false for these providers; this guard makes a
@@ -46,7 +50,15 @@ module Llm
 
       # Document OCR via the Messages API with native image / document (PDF)
       # content blocks. Returns the full extracted text as Result#text.
-      def ocr(documents:, prompt: nil, **_opts)
+      #
+      # max_tokens is supplied by OcrStage, sized from the page count: the
+      # DEFAULT_MAX_TOKENS below is a structuring budget and truncates a
+      # multi-page report. Whether the response actually completed is checked
+      # HERE, by the shared Llm::Adapter#guard_ocr_completion!, so the rule is
+      # identical for every provider AND the raise happens inside the attempt,
+      # where Llm::Caller can see it and spend the fallback.
+      # OcrStage#guard_completion! is only the backstop.
+      def ocr(documents:, prompt: nil, max_tokens: nil, **_opts)
         started = monotonic
 
         blocks = documents.map { |doc| document_block(doc) }
@@ -54,19 +66,26 @@ module Llm
 
         response = client.post("/v1/messages", {
           model: config.api_model_id,
-          max_tokens: config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
+          max_tokens: clamp_ocr_budget(max_tokens) || config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
           messages: [ { role: "user", content: blocks } ]
         })
         resp = response.body
-        text = extract_text(resp)
+        usage = usage_from(resp["usage"])
+        # Measured once so the error metadata and the Result agree on what this
+        # attempt cost in time.
+        elapsed = elapsed_ms(started)
+        # Ordered before #extract_text: a max_tokens stop still carries real
+        # text, so the blank check below would wave it through.
+        guard_ocr_completion!(resp["stop_reason"], usage: usage, latency_ms: elapsed)
+        text = extract_text(resp, usage: usage, latency_ms: elapsed)
 
         Llm::Result.new(
           text: text,
           model: config.api_model_id,
           provider: config.provider_name || config.provider_kind.to_s,
-          usage: usage_from(resp["usage"]),
+          usage: usage,
           finish_reason: resp["stop_reason"],
-          latency_ms: elapsed_ms(started),
+          latency_ms: elapsed,
           raw: resp
         )
       rescue Faraday::Error => e
@@ -84,15 +103,21 @@ module Llm
         { type: doc[:content_type] == "application/pdf" ? "document" : "image", source: source }
       end
 
-      # Joined text blocks. A 2xx with no text is a bad response (refusal or
-      # truncation) and triggers fallback upstream.
-      def extract_text(resp)
+      # Joined text blocks. A 2xx with no text is a bad response (a refusal, or
+      # a completion that spent its budget on nothing) and triggers fallback
+      # upstream. It is still a billed round-trip, so the usage rides along on
+      # the error for the ledger.
+      def extract_text(resp, usage: nil, latency_ms: nil)
         blocks = resp["content"]
-        raise Llm::BadResponse, "Anthropic response missing content blocks" unless blocks.is_a?(Array)
+        unless blocks.is_a?(Array)
+          raise billed_ocr_error("Anthropic response missing content blocks", usage: usage, latency_ms: latency_ms)
+        end
 
         text = blocks.select { |b| b.is_a?(Hash) && b["type"] == "text" }
                      .map { |b| b["text"] }.join("\n")
-        raise Llm::BadResponse, "Anthropic response contained no OCR text" if text.blank?
+        if text.blank?
+          raise billed_ocr_error("Anthropic response contained no OCR text", usage: usage, latency_ms: latency_ms)
+        end
 
         text
       end

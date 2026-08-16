@@ -1,13 +1,22 @@
 import { Controller } from "@hotwired/stimulus"
 
-// The template playground recorder.
+// The template playground: run this template against real input, two ways.
 //
-// Voice-activity detection (Silero, via the vendored @ricky0123/vad-web) cuts
-// the mic stream into whole utterances. Each utterance is POSTed to
+// AUDIO. Voice-activity detection (Silero, via the vendored @ricky0123/vad-web)
+// cuts the mic stream into whole utterances. Each utterance is POSTed to
 // /audio/segments as its own WAV, which is what that endpoint wants — an
 // independently decodable part it can transcribe on arrival. That is what buys
 // the transcript that grows while the user is still talking; the sibling
 // /audio/chunks endpoint byte-concatenates its parts and could not decode them.
+//
+// DOCUMENT. A lab report (PDF, or a photo per page) is POSTed to /documents,
+// one file per request and strictly in order — attachment id is upload order is
+// reading order, and the server OCRs them as one document in that order. The
+// server counts pages, which the browser cannot, so it owns the real ceilings.
+//
+// The two differ only in how the transcript comes to exist. Commit, polling,
+// structuring, metering and the rendered result are one shared path from there,
+// which is the point of running both from this page.
 //
 // Everything after session creation talks to the public /api/v2 with a
 // short-lived `mss_` token, so this page exercises the same API a customer
@@ -38,7 +47,9 @@ export default class extends Controller {
   static targets = [
     "record", "orbIcon", "bars", "statusLabel", "statusHint", "steps", "timer",
     "pause", "error", "errorMessage", "retry", "transcriptCard",
-    "transcriptBadge", "transcript", "fields", "result"
+    "transcriptBadge", "transcript", "fields", "result",
+    "modeAudio", "modeDocument", "audioControls", "documentControls",
+    "pick", "fileInput", "extract", "fileList", "stepZero", "transcriptTitle"
   ]
 
   static values = {
@@ -47,11 +58,17 @@ export default class extends Controller {
     resultUrl: String,
     apiBase: String,
     vadBase: String,
-    ortBase: String
+    ortBase: String,
+    maxFileBytes: Number,
+    maxTotalBytes: Number,
+    documentTypes: Array
   }
 
   connect() {
     this.state = "idle"
+    this.modality = "audio"
+    this.files = []
+    this.uploaded = false
     this.seq = 0
     this.inflight = 0
     this.session = null
@@ -100,16 +117,189 @@ export default class extends Controller {
     }
   }
 
-  // Re-commit. A commit fails as a unit when any segment has not settled, and
-  // re-committing retries exactly those — so the honest retry is the same call,
-  // not a fresh recording.
+  // ── source mode ──────────────────────────────────────────────────────────
+
+  useAudio() { this.setModality("audio") }
+  useDocument() { this.setModality("document") }
+
+  // Switching mid-run would orphan a session that is already being billed, so
+  // the switch is inert once something is under way; setState re-disables the
+  // buttons for the same reason.
+  setModality(modality) {
+    if (this.modality === modality) return
+    if (["preparing", "recording", "paused", "processing"].includes(this.state)) return
+
+    this.modality = modality
+    this.session = null
+    this.token = null
+    this.files = []
+    this.fileInputTarget.value = ""
+
+    const doc = modality === "document"
+    this.modeAudioTarget.className = `pg-mode${doc ? "" : " pg-mode-on"}`
+    this.modeDocumentTarget.className = `pg-mode${doc ? " pg-mode-on" : ""}`
+    this.modeAudioTarget.setAttribute("aria-pressed", String(!doc))
+    this.modeDocumentTarget.setAttribute("aria-pressed", String(doc))
+
+    this.recordTarget.classList.toggle("hidden", doc)
+    this.pickTarget.classList.toggle("hidden", !doc)
+    this.audioControlsTarget.classList.toggle("hidden", doc)
+    this.documentControlsTarget.classList.toggle("flex", doc)
+    this.documentControlsTarget.classList.toggle("hidden", !doc)
+
+    this.transcriptTitleTarget.textContent = doc ? "Extracted text" : "Transcript"
+    this.stepZeroTarget.textContent = doc ? "Reading document" : "Transcribing"
+
+    this.hideError()
+    this.resetFields()
+    this.renderFileList()
+    this.setState("idle")
+  }
+
+  // ── documents ────────────────────────────────────────────────────────────
+
+  chooseFiles() {
+    if (this.state === "processing") return
+    this.fileInputTarget.click()
+  }
+
+  // The sr-only input is still keyboard-reachable, so this can fire mid-run
+  // even though the orb refuses to open the dialog then. Swapping the file list
+  // under a running upload loop would arm Extract for a second, concurrent
+  // session — ignore it, the way every other control is inert while busy.
+  filesChosen() {
+    if (this.state === "processing") return
+    this.hideError()
+    this.files = Array.from(this.fileInputTarget.files || [])
+    this.renderFileList()
+  }
+
+  // Local pre-flight only. The server re-checks every one of these on arrival
+  // and additionally counts pages, so this exists to spend a message instead of
+  // an upload — never to decide what is allowed.
+  rejectionFor(files) {
+    const types = this.documentTypesValue || []
+    const bad = files.find((file) => file.type && types.length && !types.includes(file.type))
+    if (bad) return `${bad.name} is not a PDF or an image.`
+
+    const tooBig = files.find((file) => file.size > this.maxFileBytesValue)
+    if (tooBig) return `${tooBig.name} is larger than ${this.formatBytes(this.maxFileBytesValue)}.`
+
+    const total = files.reduce((sum, file) => sum + file.size, 0)
+    if (total > this.maxTotalBytesValue) {
+      return `Those files total ${this.formatBytes(total)}, over the ${this.formatBytes(this.maxTotalBytesValue)} limit.`
+    }
+    return null
+  }
+
+  renderFileList() {
+    const list = this.fileListTarget
+    list.innerHTML = ""
+    const rejection = this.files.length ? this.rejectionFor(this.files) : null
+
+    for (const file of this.files) {
+      const row = document.createElement("li")
+      row.className = "flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2"
+      const name = document.createElement("span")
+      name.className = "min-w-0 flex-1 truncate text-sm text-gray-700"
+      name.textContent = file.name
+      const size = document.createElement("span")
+      size.className = "num shrink-0 text-xs tabular-nums text-gray-400"
+      size.textContent = this.formatBytes(file.size)
+      row.append(name, size)
+      list.append(row)
+    }
+
+    list.classList.toggle("hidden", this.files.length === 0)
+    this.extractTarget.disabled = this.state === "processing" || this.files.length === 0 || Boolean(rejection)
+    if (rejection) this.showError(rejection)
+
+    if (this.files.length && !rejection && this.state === "idle") {
+      this.statusHintTarget.textContent =
+        `${this.files.length} ${this.files.length === 1 ? "file" : "files"} ready. Press Extract.`
+    }
+  }
+
+  async extract() {
+    // A second Extract while the first is uploading would open a second
+    // session against the same files; the button is disabled while busy, but
+    // the guard belongs here too, where the session is actually created.
+    if (this.state === "processing") return
+    if (!this.files.length || this.rejectionFor(this.files)) return
+
+    this.hideError()
+    this.resetFields()
+    this.setState("processing")
+    // Cleared until every file has landed, so retry() knows whether the session
+    // on the server holds the complete document or a half-uploaded one.
+    this.uploaded = false
+
+    try {
+      const session = await this.createSession()
+      this.session = session.session_id
+      this.token = session.token
+
+      // Strictly sequential: attachment id is upload order is the order the
+      // report is transcribed in, so racing these would shuffle the pages of a
+      // photographed report. The per-request row lock makes concurrency safe,
+      // not correct.
+      for (const file of this.files) {
+        const body = new FormData()
+        body.append("document", file, file.name)
+        await this.apiFetch(`/scribe_sessions/${this.session}/documents`, { method: "POST", body })
+      }
+      // Set BEFORE the commit, not after it: once every page is stored the
+      // session is complete, and if the commit call itself fails — or the
+      // server accepts it and the response is lost — the honest retry is to
+      // commit THAT session again, not to upload the whole report to a new one
+      // (which, when the first commit had in fact landed, bills two OCR runs).
+      this.uploaded = true
+
+      await this.apiFetch(`/scribe_sessions/${this.session}/commit`, { method: "POST" })
+      this.startPolling(POLL_MS_PROCESSING)
+    } catch (err) {
+      this.fail(err.message, { retryable: true })
+    }
+  }
+
+  formatBytes(bytes) {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+    return `${bytes} B`
+  }
+
+  // Re-commit. For audio, a commit fails as a unit when any segment has not
+  // settled and re-committing retries exactly those. For a document session the
+  // uploads are already stored, so this re-runs OCR against them — which is a
+  // fresh provider call and is billed as one.
+  //
+  // EXCEPT when the upload loop itself broke. The loop aborts on the first
+  // failure, so page 2 of 3 dropping leaves ONE page on the server — and
+  // commit's gate only requires that some document is attached. Re-committing
+  // there would OCR a third of a lab report, structure it, and finish green: a
+  // partial clinical document presented as complete, which is precisely what
+  // the server-side truncation guard exists to prevent. Start over instead, on
+  // a fresh session, so every page is uploaded again.
   async retry() {
+    if (this.modality === "document" && !this.uploaded) {
+      this.session = null
+      this.token = null
+      return this.extract()
+    }
+
     this.hideError()
     this.setState("processing")
     try {
       await this.apiFetch(`/scribe_sessions/${this.session}/commit`, { method: "POST" })
       this.startPolling(POLL_MS_PROCESSING)
     } catch (err) {
+      // A commit refused because the session is ALREADY processing (or done)
+      // means an earlier commit landed and only its response was lost — the
+      // run is under way. Poll it rather than dead-end on a 409 whose text
+      // says, in effect, "it's working".
+      if (err.status === 409 && /from status (processing|completed)/.test(err.message)) {
+        return this.startPolling(POLL_MS_PROCESSING)
+      }
       this.fail(err.message, { retryable: true })
     }
   }
@@ -329,7 +519,11 @@ export default class extends Controller {
   }
 
   async complete(payload) {
-    this.transcriptBadgeTarget.textContent = payload.transcript?.language || "Done"
+    // "auto" is the no-hint sentinel, not a detected language — a document
+    // transcript carries the session's hint verbatim because OCR detects
+    // nothing, so it would otherwise surface as a badge reading "auto".
+    const language = payload.transcript?.language
+    this.transcriptBadgeTarget.textContent = language && language !== "auto" ? language : "Done"
     this.transcriptBadgeTarget.className = "badge badge-neutral"
 
     await this.fillFields(payload)
@@ -394,7 +588,7 @@ export default class extends Controller {
     })
     this.transcriptTarget.textContent = ""
     this.transcriptCardTarget.classList.add("hidden")
-    this.transcriptBadgeTarget.textContent = "Listening"
+    this.transcriptBadgeTarget.textContent = this.modality === "document" ? "Reading" : "Listening"
     this.transcriptBadgeTarget.className = "badge badge-progress"
   }
 
@@ -417,7 +611,10 @@ export default class extends Controller {
       .flatMap((output) => output.errors || [])
       .map((error) => (typeof error === "string" ? error : error.message))
       .filter(Boolean)
-    return fromOutputs[0] || "This run failed. Retry to try the same audio again."
+    if (fromOutputs[0]) return fromOutputs[0]
+    return this.modality === "document"
+      ? "This run failed. Retry to read the same document again."
+      : "This run failed. Retry to try the same audio again."
   }
 
   // ── transport ────────────────────────────────────────────────────────────
@@ -430,7 +627,7 @@ export default class extends Controller {
         Accept: "application/json",
         "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || ""
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({ modality: this.modality })
     })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(payload.error?.message || "Could not start a session.")
@@ -454,7 +651,12 @@ export default class extends Controller {
     if (!response.ok) {
       // 401 carries no body at all, so this must not assume JSON.
       const payload = await response.json().catch(() => ({}))
-      throw new Error(payload.error?.message || `Request failed (${response.status})`)
+      const error = new Error(payload.error?.message || `Request failed (${response.status})`)
+      // Callers that need to tell one failure from another (retry() reading a
+      // 409 as "already running") get the status and API code, not just prose.
+      error.status = response.status
+      error.code = payload.error?.code
+      throw error
     }
 
     return response.status === 204 ? {} : response.json()
@@ -501,16 +703,24 @@ export default class extends Controller {
 
   setState(state) {
     this.state = state
+    const document_ = this.modality === "document"
 
-    const copy = {
+    const shared = {
+      done: ["Done", "This ran through the same pipeline your integration will."],
+      failed: ["Something went wrong", "Nothing was charged for a run that failed to transcribe."]
+    }
+    const copy = (document_ ? {
+      ...shared,
+      processing: ["Working on it", "Reading the document, then filling the form."],
+      idle: ["Ready when you are", "Choose a lab report — a PDF, or a photo per page."]
+    } : {
+      ...shared,
       preparing: ["Getting ready", "Loading the recogniser and asking for your microphone."],
       recording: ["Listening", "Speak naturally. Pauses are fine — it splits on them."],
       paused: ["Paused", "Resume when you are ready."],
       processing: ["Working on it", "Transcribing what you said, then filling the form."],
-      done: ["Done", "This ran through the same pipeline your integration will."],
-      failed: ["Something went wrong", "Nothing was charged for a run that failed to transcribe."],
       idle: ["Ready when you are", "Press record and describe a consultation out loud."]
-    }[state] || ["", ""]
+    })[state] || ["", ""]
 
     this.statusLabelTarget.textContent = copy[0]
     this.statusHintTarget.textContent = copy[1]
@@ -519,15 +729,28 @@ export default class extends Controller {
     this.statusHintTarget.className = "mt-0.5 text-sm text-gray-500"
 
     const recording = state === "recording" || state === "paused"
-    this.recordTarget.className = `pg-orb pg-orb-${state === "processing" ? "busy" : recording ? "recording" : "idle"}`
-    this.recordTarget.disabled = state === "preparing" || state === "processing"
+    const busy = state === "processing"
+    this.recordTarget.className =
+      `pg-orb pg-orb-${busy ? "busy" : recording ? "recording" : "idle"}${document_ ? " hidden" : ""}`
+    this.recordTarget.disabled = state === "preparing" || busy
     this.recordTarget.setAttribute("aria-label", recording ? "Stop recording" : "Start recording")
+    this.pickTarget.className = `pg-orb pg-orb-${busy ? "busy" : "idle"}${document_ ? "" : " hidden"}`
+    this.pickTarget.disabled = busy
+    // The input itself too: it is sr-only, not display:none, so it is still in
+    // the tab order when the orb that fronts it is disabled.
+    this.fileInputTarget.disabled = busy
+    this.extractTarget.disabled = busy || this.files.length === 0 || Boolean(this.rejectionFor(this.files))
+
+    // A mid-run switch would orphan a session that is already being billed.
+    this.modeAudioTarget.disabled = busy || state === "preparing" || recording
+    this.modeDocumentTarget.disabled = this.modeAudioTarget.disabled
+
     this.barsTarget.classList.toggle("hidden", !recording)
     this.timerTarget.classList.toggle("hidden", !recording)
     this.pauseTarget.classList.toggle("hidden", !recording)
     this.pauseTarget.textContent = state === "paused" ? "Resume" : "Pause"
-    this.stepsTarget.classList.toggle("hidden", state !== "processing")
-    if (state === "processing") {
+    this.stepsTarget.classList.toggle("hidden", !busy)
+    if (busy) {
       this.setStep(0)
       // The mic is closed by now, so "Listening" would be a lie.
       this.transcriptBadgeTarget.textContent = "In progress"

@@ -9,6 +9,8 @@ require "application_system_test_case"
 # provider for ASR and settling background jobs, which the integration and
 # service suites already cover without a browser.
 class PlaygroundTest < ApplicationSystemTestCase
+  include PdfFixtures
+
   # Sign in through Warden rather than the sign-in form: driving the form makes
   # every test here depend on a CSRF token surviving Turbo's page cache across
   # examples, which is a failure mode that has nothing to do with the recorder.
@@ -169,5 +171,124 @@ class PlaygroundTest < ApplicationSystemTestCase
     # Retry re-commits, which is useless with nothing to commit; the record
     # button itself is the way back.
     assert_no_selector "[data-playground-target='retry']:not(.hidden)"
+  end
+
+  # ── document (OCR) mode ───────────────────────────────────────────────────
+  #
+  # These stop at "the file is chosen and extraction is armed", for the same
+  # reason the recording tests stop at "recording has started": everything past
+  # the upload is a provider round-trip that the integration suite already
+  # covers without a browser. What cannot be covered without one is the mode
+  # switch itself and the client-side file guard.
+
+  test "switching to document mode swaps the recorder for an upload control" do
+    visit template_playground_path(@template)
+    assert_selector "button[aria-label='Start recording']"
+
+    click_on "Upload a report"
+
+    assert_selector "button[aria-label='Choose a document']"
+    assert_no_selector "button[aria-label='Start recording']"
+    assert_text "Choose a lab report"
+    assert_button "Extract", disabled: true
+  end
+
+  test "choosing a report lists it and arms extraction" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+
+    attach_file(nil, pdf_fixture, make_visible: true)
+
+    assert_text "report.pdf"
+    assert_button "Extract", disabled: false
+    assert_text(/1 file ready/i)
+  end
+
+  test "an unsupported file is refused in the browser, before any upload" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+
+    assert_no_difference -> { ScribeSession.count } do
+      attach_file(nil, text_fixture, make_visible: true)
+      assert_text "is not a PDF or an image"
+    end
+    assert_button "Extract", disabled: true
+  end
+
+  test "switching back to audio restores the recorder and forgets the file" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+    attach_file(nil, pdf_fixture, make_visible: true)
+    assert_text "report.pdf"
+
+    click_on "Record audio"
+
+    assert_selector "button[aria-label='Start recording']"
+    assert_no_text "report.pdf"
+    assert_text "Press record and describe a consultation out loud"
+  end
+
+  # The one document-mode rule that only a browser can prove. The upload loop
+  # aborts on the first failure, so page 2 of 2 being refused leaves ONE page
+  # on the server — and commit's gate only needs some document attached.
+  # Re-committing there would OCR half a lab report and finish green. Retry
+  # must instead start over on a FRESH session, never touch the half-uploaded
+  # one again. This drives the real /api/v2 with real uploads: a parseable
+  # first page and a second file pdf-reader cannot read.
+  test "retrying a broken upload loop starts over on a fresh session, not the half-uploaded one" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+    attach_file(nil, [ valid_pdf_fixture, unreadable_pdf_fixture ], make_visible: true)
+    assert_text(/2 files ready/i)
+
+    assert_difference -> { ScribeSession.where(modality: "document").count }, 1 do
+      click_on "Extract"
+      assert_text "could not be read"
+    end
+    first = ScribeSession.where(modality: "document").order(:id).last
+    assert_equal 1, first.document_files.count, "page 1 landed before page 2 was refused"
+    assert_equal "uploading", first.status
+
+    assert_difference -> { ScribeSession.where(modality: "document").count }, 1 do
+      click_on "Retry"
+      assert_text "could not be read"
+    end
+    second = ScribeSession.where(modality: "document").order(:id).last
+    assert_not_equal first.id, second.id, "retry re-used the half-uploaded session"
+    assert_equal 1, second.document_files.count
+    # The half-uploaded session was left alone: not committed, not re-uploaded to.
+    assert_equal "uploading", first.reload.status
+    assert_equal 1, first.document_files.count
+  end
+
+  private
+
+  # Written once per example into the test's tmp dir; content is irrelevant
+  # because nothing here uploads it — only the browser-side type and size
+  # checks read the File object.
+  def pdf_fixture
+    path = Rails.root.join("tmp", "report.pdf")
+    File.binwrite(path, "%PDF-1.4\n%%EOF\n")
+    path.to_s
+  end
+
+  # A PDF the server can actually parse (the upload-loop test posts it for
+  # real), and one it cannot: same header, no structure.
+  def valid_pdf_fixture
+    path = Rails.root.join("tmp", "page-1.pdf")
+    File.binwrite(path, minimal_pdf(pages: 1))
+    path.to_s
+  end
+
+  def unreadable_pdf_fixture
+    path = Rails.root.join("tmp", "page-2.pdf")
+    File.binwrite(path, "%PDF-1.4 this is not a real pdf")
+    path.to_s
+  end
+
+  def text_fixture
+    path = Rails.root.join("tmp", "notes.txt")
+    File.write(path, "not a lab report")
+    path.to_s
   end
 end

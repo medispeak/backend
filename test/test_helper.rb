@@ -10,6 +10,7 @@ ENV["OPENAI_ACCESS_TOKEN"] ||= "test-openai-token"
 require_relative "../config/environment"
 require "rails/test_help"
 require "webmock/minitest"
+Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
 
 # All external provider HTTP must be stubbed in tests.
 WebMock.disable_net_connect!(allow_localhost: true)

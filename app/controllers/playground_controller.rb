@@ -14,6 +14,12 @@
 class PlaygroundController < ApplicationController
   before_action :set_template
 
+  # What the browser may ask for. A document run uploads a lab report to
+  # /documents and is extracted by vision OCR; an audio run records and uploads
+  # utterances to /audio/segments. Everything after the transcript exists is the
+  # same pipeline, which is exactly what makes running both from here worth it.
+  MODALITIES = %w[audio document].freeze
+
   # GET /templates/:template_id/playground
   def show
     # `set_template` already loaded the runnable pages, ordered and preloaded:
@@ -39,7 +45,7 @@ class PlaygroundController < ApplicationController
       user: current_user,
       outputs: @pages_with_fields.map { |page| { type: "form", page_id: page.id } },
       mode: "consultation",
-      modality: "audio",
+      modality: modality,
       language_hint: language_hint
     ).call
 
@@ -53,6 +59,7 @@ class PlaygroundController < ApplicationController
       session_id: result.session.id,
       token: token,
       expires_at: expires_at.iso8601,
+      modality: result.session.modality,
       pages: @pages_with_fields.map do |page|
         {
           id: page.id,
@@ -125,5 +132,12 @@ class PlaygroundController < ApplicationController
   # the stage special-cases it.
   def language_hint
     params[:language_hint].presence || "auto"
+  end
+
+  # Anything unrecognised runs as audio rather than 422-ing: the modality is a
+  # UI affordance here, not a contract, and SessionBuilder would reject a bad
+  # value with an error the playground has no useful way to explain.
+  def modality
+    MODALITIES.include?(params[:modality]) ? params[:modality] : "audio"
   end
 end

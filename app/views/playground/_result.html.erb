@@ -6,7 +6,11 @@
   Usage is shown deliberately: the person evaluating whether this product is
   worth paying for is the person who just pressed record.
 %>
-<% total_cost = session.usage_events.sum { |event| event.cost.to_f } %>
+<%# Finalized only, like the per-stage rows below and the API's usage object:
+    a billed-but-unusable attempt (a truncated OCR response) is in the ledger
+    as :failed for our own accounting but was never charged to the customer,
+    and the status line has just told them a failed run costs nothing. %>
+<% total_cost = session.usage_events.select(&:finalized?).sum { |event| event.cost.to_f } %>
 <% audio_seconds = session.usage_events.sum { |event| event.audio_seconds.to_f } %>
 <% total_tokens = session.usage_events.sum { |event| event.total_tokens.to_i } %>
 <% filled = outputs.sum { |output| output.result.is_a?(Hash) ? output.result.count { |_, v| v.present? || v == false } : 0 } %>

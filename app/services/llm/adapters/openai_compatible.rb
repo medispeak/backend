@@ -67,40 +67,73 @@ module Llm
       # Document OCR through the chat endpoint with multimodal content parts:
       # images as base64 data-URL image_url parts, PDFs as base64 file parts
       # (gpt-4o/4.1 family). Returns the full extracted text as Result#text.
-      def ocr(documents:, prompt: nil, **_opts)
+      # max_tokens is supplied by OcrStage, sized from the page count. Sending
+      # none left the extraction capped at whatever the endpoint's default
+      # happened to be, which for a multi-page report is a truncation waiting to
+      # happen. The parameter NAME depends on the endpoint — see
+      # #output_budget_param.
+      def ocr(documents:, prompt: nil, max_tokens: nil, **_opts)
         started = monotonic
         parts = [ { type: "text", text: prompt.to_s } ]
         documents.each { |doc| parts << document_part(doc) }
 
-        response = client.chat(parameters: {
+        params = {
           model: config.api_model_id,
           messages: [ { role: "user", content: parts } ]
-        })
+        }
+        params[output_budget_param] = clamp_ocr_budget(max_tokens) if max_tokens
+        response = client.chat(parameters: params)
         choice = response.dig("choices", 0) || {}
         finish_reason = choice["finish_reason"]
         text = choice.dig("message", "content")
+        usage = usage_from(response["usage"])
+        elapsed = elapsed_ms(started)
 
-        # Same early-stop guard as #structure: a truncated extraction would
-        # silently drop part of a clinical document.
-        if finish_reason && !%w[stop].include?(finish_reason.to_s)
-          raise Llm::BadResponse, "model did not complete (finish_reason=#{finish_reason})"
-        end
-        raise Llm::BadResponse, "provider returned no OCR text" if text.blank?
+        # Shared with the Anthropic adapter (Llm::Adapter#guard_ocr_completion!)
+        # so one rule decides what "complete" means for every vision provider.
+        # Both raises carry the usage: an unusable 200 is still a billed one.
+        guard_ocr_completion!(finish_reason, usage: usage, latency_ms: elapsed)
+        raise billed_ocr_error("provider returned no OCR text", usage: usage, latency_ms: elapsed) if text.blank?
 
         Llm::Result.new(
           text: text,
           model: config.api_model_id,
           provider: config.provider_name || config.provider_kind.to_s,
-          usage: usage_from(response["usage"]),
+          usage: usage,
           finish_reason: finish_reason,
-          latency_ms: elapsed_ms(started),
+          latency_ms: elapsed,
           raw: response
         )
       rescue Faraday::Error => e
         raise map_transport_error(e)
       end
 
+      OPENAI_HOST = "api.openai.com".freeze
+      # The gpt-4o family — including the default OCR model, gpt-4o-mini — caps
+      # completions at 16,384 tokens and 400s anything above it. gpt-4.1 and the
+      # reasoning models allow more; declare that in capabilities.max_output_tokens.
+      DEFAULT_OUTPUT_CEILING = 16_384
+
       private
+
+      # Which request field carries the OCR output budget.
+      #
+      # OpenAI deprecated `max_tokens` in favour of `max_completion_tokens` and
+      # its newer models (the o-series, GPT-5) reject the old name outright, so
+      # an OCR assignment to one of those would 400 on every call. Every current
+      # OpenAI model accepts the new name. The wider OpenAI-compatible world has
+      # not caught up uniformly — Ollama only knows `max_tokens`, OpenRouter
+      # varies by route — so anything that is not api.openai.com keeps the name
+      # that is universally understood there. Decided by host, not model id,
+      # because the same model id can be reached through either kind of endpoint.
+      def output_budget_param
+        host = begin
+          URI.parse(config.base_url.to_s).host
+        rescue URI::InvalidURIError
+          nil
+        end
+        host == OPENAI_HOST ? :max_completion_tokens : :max_tokens
+      end
 
       def document_part(doc)
         data_url = "data:#{doc[:content_type]};base64,#{Base64.strict_encode64(doc[:data])}"

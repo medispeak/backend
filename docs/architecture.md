@@ -76,8 +76,11 @@ callers. When a provider omits a usage block, the adapter returns a `Usage` with
      naming the unsettled seqs** — re-commit retries exactly those segments.
    - `audio` **without** segments → whole-file ASR (`AsrStage`).
    The extracted text persists as the session's `Transcript`. If extraction
-   fails, the session and **every** output are marked failed and it returns
-   early (nothing to structure).
+   fails — for **any** reason, not only an `Llm::Error`: a missing blob, a
+   rejected `Transcript` write — the session and **every** output are marked
+   failed and it returns early (nothing to structure). Widening that rescue is
+   what keeps a lost blob from leaving outputs stuck at `pending` with no
+   webhook and no error text.
 2. **Per output, isolated** — for each `scribe_output`:
    - `transcript` → echo the transcript text/language (no LLM call).
    - `form` → run `StructuringStage` against the page's form fields. Valid →
@@ -92,6 +95,65 @@ callers. When a provider omits a usage block, the adapter returns a `Usage` with
 Metering for each physical attempt runs **outside** the per-output rescue so a
 metering error can never demote a finalized success or fail the session.
 
+### The document (OCR) modality
+
+A `document` session differs from an `audio` one in exactly one place — how the
+`Transcript` comes to exist. Everything downstream (structuring, per-output
+isolation, metering, status rollup, webhooks) is the shared path, which is the
+whole reason OCR was modelled as a transcript-producing stage rather than a
+parallel pipeline.
+
+```text
+POST /:id/documents  (one call per file, in page order)
+  │  content-type allowlist + 10 MB per file
+  │  count_pages: walk the PDF /Pages tree — NOT its self-declared /Count —
+  │               inside a 2s Timeout, because both the xref subsection length
+  │               and the tree are attacker-controlled; every FlateDecode
+  │               inflate is capped (initializer), because a 4 KB stream can
+  │               decode to gigabytes long before any timeout fires
+  │  session.with_lock { re-check 20 MB / 20 pages, attach, increment }
+  ▼
+POST /:id/commit → hold sized from pages → ProcessScribeSessionJob
+  ▼
+Orchestrator#transcript_from_documents!
+  │  attachments sorted by id (= upload order = reading order)
+  │  each blob downloaded and base64'd; ONE provider call carries them all
+  ▼
+Scribe::OcrStage
+  │  max_tokens sized from the page count (2000/page, floored and capped) —
+  │  the adapters' 4096 default is a structuring budget and truncates a report;
+  │  each adapter then clamps it to what ITS model accepts (capabilities.
+  │  max_output_tokens, else a per-provider default), because a budget above
+  │  the model's ceiling is a 400 before any work is done
+  │  Llm::Caller.ocr → primary, then fallback on a TRANSIENT error
+  ▼
+Transcript (the audit trail of what the model read) → StructuringStage per output
+```
+
+**Completeness is enforced, not assumed.** `Llm::Adapter#guard_ocr_completion!`
+rejects any finish reason other than `stop`/`end_turn`, so a response that ran
+out of output budget fails instead of persisting half a lab report that reads
+as complete. It is raised *inside* the adapter deliberately: only an error
+raised during the attempt is visible to `Llm::Caller`, which is what turns a
+truncation into a fallback attempt rather than an immediate session failure.
+A `refusal` / `content_filter` stop is raised as `Llm::Refused` instead — a
+decision, not a fault, so it is reported as such and not retried on the
+fallback. `OcrStage` repeats the completeness check as a backstop for any
+future adapter that forgets.
+
+**Billed-but-unusable attempts are recorded.** A truncated or empty completion
+still consumed tokens the provider will invoice, so `Llm::Error` carries that
+response's `usage` and the orchestrator writes a `status: :failed` `UsageEvent`
+for it — visible in the ledger, deliberately **not** passed to
+`QuotaGuard.deduct!`, since the customer is not charged for a run that produced
+nothing. Transport failures carry no usage and record nothing.
+
+**Retries are billed.** The OCR dedupe key carries an attempt number, so
+re-committing a session whose extraction failed meters the second provider call
+separately instead of colliding with the first and vanishing. Single-flight is
+guaranteed by commit's atomic claim; a retry of an attempt that already
+*succeeded* short-circuits earlier, at `session.transcript.present?`.
+
 ---
 
 ## The meter: `Metering::*`
@@ -100,7 +162,7 @@ metering error can never demote a finalized success or fail the session.
 
 | Component                  | Responsibility |
 |----------------------------|----------------|
-| `Metering::UsageRecorder`  | Pure per-attempt meter. From a normalized `Llm::Result` it prices the call via `PriceBook`, snapshots unit prices, attributes the acting `user_id`, and persists a `UsageEvent`. **One metering rule:** every successful physical attempt records exactly one dedupe-keyed `UsageEvent`; assembly and echo are never metered. |
+| `Metering::UsageRecorder`  | Pure per-attempt meter. From a normalized `Llm::Result` it prices the call via `PriceBook`, snapshots unit prices, attributes the acting `user_id`, and persists a `UsageEvent`. **One metering rule:** every physical attempt records exactly one dedupe-keyed `UsageEvent` — `finalized` when it produced a usable result, `failed` when the provider billed us for one we could not use (a truncated or empty completion). Only `finalized` events are deducted from credits. Attempts that returned nothing at all (timeouts, 5xx) and steps with no provider call (segment assembly, transcript echo) are never metered. |
 | `Metering::PriceBook`      | Computes cost from versioned `ModelPrice` (per-million tokens), `AudioModelPrice` (per-minute), and `DocumentModelPrice` (per-page, optional) tables, effective at a timestamp. Never raises on a missing price — it returns zeros so metering degrades gracefully. |
 | `Metering::QuotaGuard`     | Ledger-backed quota enforcement against `AccountCredit` + `CreditTransaction`: `hold!` (at commit), `deduct!` (on finalize), `refund!`. Accounts without an `AccountCredit` are treated as unlimited (no-ops). |
 | `Metering::LimitGuard`     | Pure-read admission gate for `UsageLimit` caps (subtree/per_user × tokens/cost × daily/monthly). Windowed sums over `usage_events`; every limit on the account's leaf-to-root chain must pass at commit. NOT a second ledger. |
@@ -116,6 +178,8 @@ Client ──Bearer msk_live_…──► Api::V2::ScribeSessionsController
   │
   │  POST /scribe_sessions      create the session + outputs        ► 201
   │  POST /:id/audio            attach audio blob (status: uploading)► 200
+  │    …or, modality: document…
+  │  POST /:id/documents        count pages, attach under a row lock ► 200
   │  POST /:id/commit ──────────┐
   │                             │  QuotaGuard.hold!(estimate: 0)
   │                             │  session → processing
@@ -125,9 +189,12 @@ Client ──Bearer msk_live_…──► Api::V2::ScribeSessionsController
   │                             │  session → processing
   │                             ▼
   │                 Scribe::Orchestrator
-  │                   │  ensure_transcript!  (ASR once → Transcript)
-  │                   │     └─ Llm::ConfigResolver(:asr) → AsrStage → Llm::Caller.transcribe
+  │                   │  ensure_transcript!  (source extracted ONCE → Transcript)
+  │                   │     └─ audio:    ConfigResolver(:asr) → AsrStage → Caller.transcribe
+  │                   │     └─ document: ConfigResolver(:ocr) → OcrStage → Caller.ocr
   │                   │     └─ UsageRecorder.record + QuotaGuard.deduct!   (per attempt)
+  │                   │     └─ on a billed-but-unusable response:
+  │                   │          UsageRecorder.record(status: :failed), NO deduct
   │                   │  for each output:
   │                   │     └─ StructuringStage → Llm::Caller.structure → SchemaValidator
   │                   │     └─ UsageRecorder.record + QuotaGuard.deduct!   (per attempt)
