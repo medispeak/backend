@@ -10,14 +10,16 @@ class AiModelDashboard < Administrate::BaseDashboard
   #
   # capabilities is a JSON blob of booleans (accepts_audio, can_transcribe,
   # can_structure, supports_json_schema, supports_function_calling,
-  # native_diarization). Edit it as JSON in the form, e.g.
-  #   {"accepts_audio": true, "can_transcribe": true}
+  # native_diarization). Edited as JSON text; the model (JsonObjectColumns)
+  # parses it. NEVER Field::Text — it persists a JSON *string* scalar.
   ATTRIBUTE_TYPES = {
     id: Field::Number,
     ai_provider: Field::BelongsTo,
     api_model_id: Field::String,
     display_name: Field::String,
-    capabilities: Field::Text,
+    capabilities: Field::JsonObject.with_options(
+      hint: 'JSON object of booleans, e.g. {"accepts_audio": true, "can_transcribe": true}'
+    ),
     active: Field::Boolean,
     created_at: Field::DateTime,
     updated_at: Field::DateTime

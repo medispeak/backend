@@ -1,5 +1,10 @@
 class FormField < ApplicationRecord
+  include JsonObjectColumns
+
   belongs_to :page
+
+  # Edited as JSON text in the admin UI; see JsonObjectColumns.
+  json_object_columns :metadata
 
   # Using string enum for better readability
   enum :field_type, {

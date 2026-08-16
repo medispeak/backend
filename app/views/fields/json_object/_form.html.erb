@@ -1,0 +1,14 @@
+<div class="field-unit__label">
+  <%= f.label field.attribute %>
+</div>
+<div class="field-unit__field">
+  <%= f.text_area field.attribute,
+    value: field.to_s,
+    class: "json-object-input",
+    rows: 6,
+    spellcheck: false,
+    placeholder: "{}" %>
+  <p class="field-unit__hint">
+    <%= field.options.fetch(:hint, "JSON object, e.g. {}") %>
+  </p>
+</div>

@@ -14,7 +14,8 @@ class FormFieldDashboard < Administrate::BaseDashboard
     field_type: Field::Select.with_options(
       collection: FormField.field_types.keys.map { |t| [ t.humanize, t ] }
     ),
-    metadata: Field::String.with_options(searchable: false),
+    # jsonb object edited as JSON text; the model (JsonObjectColumns) parses it.
+    metadata: Field::JsonObject.with_options(searchable: false, hint: "JSON object, e.g. {}"),
     minimum: Field::String,
     maximum: Field::String,
     enum_options: Field::StringArray.with_options(

@@ -63,6 +63,83 @@ module Admin
       assert_response :success
     end
 
+    # ------------------------------------------------- jsonb round-trip
+    # The admin form edits jsonb columns as raw JSON text. These replay the
+    # exact requests from the 2026-08-16 incident, where "options"=>"{}"
+    # (a String) was persisted as a JSON string scalar and broke every ASR
+    # call in production.
+
+    test "creating a model_assignment with options as JSON text stores a JSON object" do
+      account = create(:account)
+
+      post admin_model_assignments_path, params: {
+        model_assignment: {
+          scope_type: "Account", scope_id: account.id, function: "asr",
+          ai_model_id: @model.id, fallback_ai_model_id: "", options: "{}"
+        }
+      }
+      assert_response :redirect
+
+      created = ModelAssignment.find_by!(scope_type: "Account", scope_id: account.id, function: "asr")
+      assert_equal({}, created.options)
+      assert_equal "object", jsonb_typeof("model_assignments", "options", created.id)
+      assert_nothing_raised { Llm::ConfigResolver.call(function: :asr, account: account) }
+    end
+
+    test "updating a model_assignment with options as JSON text stores a JSON object" do
+      patch admin_model_assignment_path(@assignment), params: {
+        model_assignment: {
+          scope_type: "System", scope_id: "", function: "asr",
+          ai_model_id: @model.id, fallback_ai_model_id: "", options: '{"asr_mode": "translate"}'
+        }
+      }
+      assert_response :redirect
+
+      @assignment.reload
+      assert_equal({ "asr_mode" => "translate" }, @assignment.options)
+      assert_equal "object", jsonb_typeof("model_assignments", "options", @assignment.id)
+      assert_equal :translate, Llm::ConfigResolver.call(function: :asr).asr_mode
+    end
+
+    test "updating a model_assignment with non-object JSON re-renders the form with an error" do
+      patch admin_model_assignment_path(@assignment), params: {
+        model_assignment: { options: "[1, 2]" }
+      }
+      assert_response :unprocessable_entity
+      assert_includes response.body, "must be a JSON object"
+      assert_equal({}, @assignment.reload.options)
+    end
+
+    test "model_assignment edit form renders options as valid JSON, not Ruby inspect" do
+      @assignment.update!(options: { "asr_mode" => "translate" })
+
+      get edit_admin_model_assignment_path(@assignment)
+      assert_response :success
+      assert_select "textarea[name='model_assignment[options]']" do |textarea|
+        assert_equal({ "asr_mode" => "translate" }, JSON.parse(textarea.text))
+      end
+    end
+
+    test "updating an ai_model with capabilities as JSON text stores a JSON object" do
+      patch admin_ai_model_path(@model), params: {
+        ai_model: { capabilities: '{"accepts_audio": true, "can_transcribe": true}' }
+      }
+      assert_response :redirect
+
+      @model.reload
+      assert_equal({ "accepts_audio" => true, "can_transcribe" => true }, @model.capabilities)
+      assert_equal "object", jsonb_typeof("ai_models", "capabilities", @model.id)
+      assert @model.capability?(:can_transcribe)
+    end
+
+    test "ai_model edit form renders capabilities as valid JSON" do
+      get edit_admin_ai_model_path(@model)
+      assert_response :success
+      assert_select "textarea[name='ai_model[capabilities]']" do |textarea|
+        assert_equal @model.capabilities, JSON.parse(textarea.text)
+      end
+    end
+
     test "non-admin users are redirected away from admin" do
       sign_out(@admin)
       plain_user = create(:user)
@@ -70,6 +147,14 @@ module Admin
 
       get admin_ai_providers_path
       assert_response :redirect
+    end
+
+    private
+
+    def jsonb_typeof(table, column, id)
+      ActiveRecord::Base.connection.select_value(
+        "SELECT jsonb_typeof(#{column}) FROM #{table} WHERE id = #{id.to_i}"
+      )
     end
   end
 end

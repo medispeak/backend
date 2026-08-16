@@ -1,9 +1,16 @@
 class ModelAssignment < ApplicationRecord
+  include JsonObjectColumns
+
   SCOPES = %w[System Account Template Page].freeze
   FUNCTIONS = %w[asr structuring ocr].freeze
 
   belongs_to :ai_model
   belongs_to :fallback_ai_model, class_name: "AiModel", optional: true
+
+  # Per-assignment knobs read by Llm::ConfigResolver (e.g. {"asr_mode": "translate"}).
+  # Edited as JSON text in the admin UI, so it MUST be coerced to a Hash — a
+  # String here crashes every resolver call.
+  json_object_columns :options
 
   validates :scope_type, presence: true, inclusion: { in: SCOPES }
   validates :function, presence: true, inclusion: { in: FUNCTIONS }

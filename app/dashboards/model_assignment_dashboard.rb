@@ -26,7 +26,12 @@ class ModelAssignmentDashboard < Administrate::BaseDashboard
     # Administrate resolves the AiModel class/dashboard from the association's
     # declared class_name (belongs_to :fallback_ai_model, class_name: "AiModel").
     fallback_ai_model: Field::BelongsTo,
-    options: Field::Text,
+    # jsonb object edited as JSON text; the model (JsonObjectColumns) parses it.
+    # NEVER Field::Text here — it persists the textarea as a JSON *string* and
+    # takes down every resolver call (2026-08-16 incident).
+    options: Field::JsonObject.with_options(
+      hint: 'JSON object of resolver options, e.g. {} or {"asr_mode": "translate"}'
+    ),
     created_at: Field::DateTime,
     updated_at: Field::DateTime
   }.freeze

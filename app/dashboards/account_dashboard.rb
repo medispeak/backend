@@ -14,7 +14,10 @@ class AccountDashboard < Administrate::BaseDashboard
     id: Field::Number,
     name: Field::String,
     status: Field::String,
-    settings: Field::Text,
+    # jsonb object edited as JSON text; the model (JsonObjectColumns) parses it.
+    settings: Field::JsonObject.with_options(
+      hint: 'JSON object of account settings, e.g. {"rpm": 300}'
+    ),
     parent: Field::BelongsTo.with_options(class_name: "Account"),
     children: Field::HasMany.with_options(class_name: "Account"),
     usage_limits: Field::HasMany,

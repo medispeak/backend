@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_29_030000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_16_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -34,6 +34,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_29_030000) do
     t.datetime "updated_at", null: false
     t.string "webhook_secret"
     t.index ["parent_id"], name: "index_accounts_on_parent_id"
+    t.check_constraint "jsonb_typeof(settings) = 'object'::text", name: "accounts_settings_is_object"
   end
 
   create_table "active_storage_attachments", force: :cascade do |t|
@@ -73,6 +74,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_29_030000) do
     t.string "display_name"
     t.datetime "updated_at", null: false
     t.index ["ai_provider_id"], name: "index_ai_models_on_ai_provider_id"
+    t.check_constraint "jsonb_typeof(capabilities) = 'object'::text", name: "ai_models_capabilities_is_object"
   end
 
   create_table "ai_providers", force: :cascade do |t|
@@ -164,6 +166,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_29_030000) do
     t.string "title"
     t.datetime "updated_at", null: false
     t.index ["page_id"], name: "index_form_fields_on_page_id"
+    t.check_constraint "jsonb_typeof(metadata) = 'object'::text", name: "form_fields_metadata_is_object"
   end
 
   create_table "idempotency_keys", force: :cascade do |t|
@@ -190,6 +193,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_29_030000) do
     t.datetime "updated_at", null: false
     t.index ["ai_model_id"], name: "index_model_assignments_on_ai_model_id"
     t.index ["scope_type", "scope_id", "function"], name: "index_model_assignments_on_scope_and_function", unique: true
+    t.check_constraint "jsonb_typeof(options) = 'object'::text", name: "model_assignments_options_is_object"
   end
 
   create_table "model_prices", force: :cascade do |t|

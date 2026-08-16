@@ -105,6 +105,24 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
     assert_equal "fb", cfg.fallback.api_model_id
   end
 
+  # Regression for the 2026-08-16 prod incident: the admin form submitted
+  # options as the JSON text "{}" (a String), Rails persisted it as a JSON
+  # string scalar, and every ASR call died in #symbolize with
+  # `undefined method 'each_with_object' for an instance of String`.
+  test "resolves an assignment whose options were assigned as JSON text" do
+    provider = create(:ai_provider, kind: "sarvam", api_key: "sk-sarvam")
+    model = create(:ai_model, ai_provider: provider, api_model_id: "saaras:v3",
+                              capabilities: '{"accepts_audio": true, "can_transcribe": true}')
+    create(:model_assignment, scope_type: "System", function: "asr", ai_model: model, options: "{}")
+
+    cfg = nil
+    assert_nothing_raised { cfg = Llm::ConfigResolver.call(function: :asr) }
+    assert_equal "saaras:v3", cfg.api_model_id
+    assert_equal({}, cfg.options)
+    assert cfg.capability?(:can_transcribe)
+    assert_equal :transcribe, cfg.asr_mode, "asr_mode falls back to the default when options is empty"
+  end
+
   test "api key is encrypted at rest" do
     provider = create(:ai_provider, api_key: "sk-plaintext-secret")
     raw = AiProvider.connection.select_value("SELECT api_key FROM ai_providers WHERE id = #{provider.id}")

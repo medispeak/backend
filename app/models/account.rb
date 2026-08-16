@@ -1,8 +1,16 @@
 class Account < ApplicationRecord
+  include JsonObjectColumns
+
   # Maximum tree depth (a root counts as 1): org -> program -> facility ->
   # sub-facility. Also the hard bound on every runtime tree walk, so even
   # corrupted parent data can never loop forever.
   MAX_DEPTH = 4
+
+  # Per-account knobs (e.g. {"rpm": 300} read by rack_attack and
+  # Api::V2::ConfigController). Edited as JSON text in the admin UI, so it
+  # MUST be coerced to a Hash: a String here makes settings["rpm"] a substring
+  # match and the throttle collapses to 0 rpm.
+  json_object_columns :settings
 
   belongs_to :parent, class_name: "Account", optional: true
   # A node with children cannot be deleted — reparent or delete them first.

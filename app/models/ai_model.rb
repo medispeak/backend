@@ -1,7 +1,12 @@
 class AiModel < ApplicationRecord
+  include JsonObjectColumns
+
   belongs_to :ai_provider
 
   validates :api_model_id, presence: true
+
+  # Edited as JSON text in the admin UI; see JsonObjectColumns.
+  json_object_columns :capabilities
 
   scope :active, -> { where(active: true) }
 
