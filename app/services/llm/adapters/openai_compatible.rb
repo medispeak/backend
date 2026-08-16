@@ -70,8 +70,8 @@ module Llm
       # max_tokens is supplied by OcrStage, sized from the page count. Sending
       # none left the extraction capped at whatever the endpoint's default
       # happened to be, which for a multi-page report is a truncation waiting to
-      # happen. `max_tokens` (rather than `max_completion_tokens`) is what every
-      # OpenAI-compatible endpoint this adapter targets understands.
+      # happen. The parameter NAME depends on the endpoint — see
+      # #output_budget_param.
       def ocr(documents:, prompt: nil, max_tokens: nil, **_opts)
         started = monotonic
         parts = [ { type: "text", text: prompt.to_s } ]
@@ -81,7 +81,7 @@ module Llm
           model: config.api_model_id,
           messages: [ { role: "user", content: parts } ]
         }
-        params[:max_tokens] = max_tokens if max_tokens
+        params[output_budget_param] = clamp_ocr_budget(max_tokens) if max_tokens
         response = client.chat(parameters: params)
         choice = response.dig("choices", 0) || {}
         finish_reason = choice["finish_reason"]
@@ -93,13 +93,7 @@ module Llm
         # so one rule decides what "complete" means for every vision provider.
         # Both raises carry the usage: an unusable 200 is still a billed one.
         guard_ocr_completion!(finish_reason, usage: usage, latency_ms: elapsed)
-        if text.blank?
-          raise Llm::BadResponse.new(
-            "provider returned no OCR text", usage: usage, latency_ms: elapsed,
-            provider: config.provider_name || config.provider_kind.to_s,
-            model: config.api_model_id
-          )
-        end
+        raise billed_ocr_error("provider returned no OCR text", usage: usage, latency_ms: elapsed) if text.blank?
 
         Llm::Result.new(
           text: text,
@@ -107,14 +101,39 @@ module Llm
           provider: config.provider_name || config.provider_kind.to_s,
           usage: usage,
           finish_reason: finish_reason,
-          latency_ms: elapsed_ms(started),
+          latency_ms: elapsed,
           raw: response
         )
       rescue Faraday::Error => e
         raise map_transport_error(e)
       end
 
+      OPENAI_HOST = "api.openai.com".freeze
+      # The gpt-4o family — including the default OCR model, gpt-4o-mini — caps
+      # completions at 16,384 tokens and 400s anything above it. gpt-4.1 and the
+      # reasoning models allow more; declare that in capabilities.max_output_tokens.
+      DEFAULT_OUTPUT_CEILING = 16_384
+
       private
+
+      # Which request field carries the OCR output budget.
+      #
+      # OpenAI deprecated `max_tokens` in favour of `max_completion_tokens` and
+      # its newer models (the o-series, GPT-5) reject the old name outright, so
+      # an OCR assignment to one of those would 400 on every call. Every current
+      # OpenAI model accepts the new name. The wider OpenAI-compatible world has
+      # not caught up uniformly — Ollama only knows `max_tokens`, OpenRouter
+      # varies by route — so anything that is not api.openai.com keeps the name
+      # that is universally understood there. Decided by host, not model id,
+      # because the same model id can be reached through either kind of endpoint.
+      def output_budget_param
+        host = begin
+          URI.parse(config.base_url.to_s).host
+        rescue URI::InvalidURIError
+          nil
+        end
+        host == OPENAI_HOST ? :max_completion_tokens : :max_tokens
+      end
 
       def document_part(doc)
         data_url = "data:#{doc[:content_type]};base64,#{Base64.strict_encode64(doc[:data])}"

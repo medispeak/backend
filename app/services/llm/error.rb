@@ -10,6 +10,13 @@ module Llm
   # returned, nothing was billed, nothing to record.
   class Error < StandardError
     attr_reader :usage, :provider, :model, :latency_ms
+    # Billed errors from EARLIER attempts that Llm::Caller abandoned before this
+    # one was raised — the mirror of Llm::Result#discarded_attempts for the case
+    # where the fallback fails too. Without it, a primary that truncated (billed)
+    # followed by a fallback that 500'd would surface only the fallback error,
+    # and the primary's spend would be recorded nowhere. Set by Llm::Caller;
+    # read by the metering layer, which records each one before this error.
+    attr_accessor :discarded_attempts
 
     def initialize(message = nil, usage: nil, provider: nil, model: nil, latency_ms: nil)
       super(message)
@@ -22,6 +29,11 @@ module Llm
     # Whether the provider returned something it will charge us for.
     def billable?
       !usage.nil?
+    end
+
+    # Always an Array — nil-safe.
+    def discarded
+      Array(discarded_attempts)
     end
   end
 end
