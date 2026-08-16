@@ -9,20 +9,21 @@ module ScribeSessions
   # every single request for it, including each seek, passes the same Pundit
   # check that guards the page it plays on.
   #
-  # Streamed rather than redirected for the same reason: no presigned URL is
-  # ever minted, so the audio has no life outside a signed-in session, and the
+  # Served from here rather than redirected for the same reason: no presigned URL
+  # is ever minted, so the audio has no life outside a signed-in session, and the
   # media stays on this origin (the CSP allows media from :self only). Range
   # requests are answered because that is what seeking is made of — a player
   # jumping to the middle of a 20MB file must not have to pull the first 19.
-  # This mirrors ActiveStorage::Blobs::ProxyController, with authorization in
-  # front of it.
   #
-  # ActionController::Live (via ActiveStorage::Streaming) runs the action on its
-  # own thread, which is why this is a controller of its own rather than another
-  # action on ScribeSessionsController: nothing else should pay that cost.
+  # This does the same job as ActiveStorage::Blobs::ProxyController but does NOT
+  # reuse ActiveStorage::Streaming, which brings ActionController::Live with it.
+  # Live runs the action, and therefore its before_actions, on a child thread —
+  # and Warden signals "not signed in" by `throw :warden`, which is caught by its
+  # middleware back on the request thread. Off-thread that throw finds no catch,
+  # so every signed-out request 500s instead of redirecting to the login page.
+  # (Seen in production, not in the test suite, whose stack does not reproduce
+  # it.) Everything below answers with send_data, which needs no extra thread.
   class AudioController < ApplicationController
-    include ActiveStorage::Streaming
-
     # Long enough that seeking backwards and crossing a segment boundary reuse
     # what the browser already has; private and short so clinical audio is not
     # left sitting in a shared cache or on disk for the rest of the day.
@@ -37,18 +38,16 @@ module ScribeSessions
       return head :not_found if blob.nil?
 
       response.headers["Cache-Control"] = CACHE_CONTROL
+      response.headers["Accept-Ranges"] = "bytes"
 
-      # Disposition is Active Storage's to decide, not the caller's: audio is not
-      # on its inline allowlist, so it serves as an attachment whatever is asked
-      # for here. That is left alone — a media element ignores the header
-      # entirely, so playback is unaffected, and the download link gets the
-      # right behaviour and the right filename for free.
-      if request.headers["Range"].present?
-        send_blob_byte_range_data blob, request.headers["Range"]
+      range = requested_range(blob)
+      return head :range_not_satisfiable if range == :unsatisfiable
+
+      if range
+        response.headers["Content-Range"] = "bytes #{range.begin}-#{range.end}/#{blob.byte_size}"
+        serve blob, blob.download_chunk(range), status: :partial_content
       else
-        response.headers["Accept-Ranges"] = "bytes"
-        response.headers["Content-Length"] = blob.byte_size.to_s
-        send_blob_stream blob
+        serve blob, blob.download, status: :ok
       end
     end
 
@@ -63,6 +62,33 @@ module ScribeSessions
       when "file"    then session.audio_files_attachments.find_by(id: params[:source_id])&.blob
       when "segment" then session.transcript_segments.find_by(id: params[:source_id])&.data&.blob
       end
+    end
+
+    # nil for "no range asked for", a Range to serve, or :unsatisfiable. Only a
+    # single range is honoured — the same limit Active Storage defaults to, and
+    # more than a media element ever asks for.
+    def requested_range(blob)
+      header = request.headers["Range"]
+      return nil if header.blank?
+
+      ranges = Rack::Utils.get_byte_ranges(header, blob.byte_size)
+      return nil if ranges.nil?
+      return :unsatisfiable if ranges.length != 1 || ranges.first.blank?
+
+      ranges.first
+    end
+
+    # Disposition and content type are Active Storage's to decide, not the
+    # caller's: audio is not on its inline allowlist, so it serves as an
+    # attachment whatever a query string asks for. That is left alone — a media
+    # element ignores the header entirely, so playback is unaffected, and the
+    # download link gets the right behaviour and the right filename for free.
+    def serve(blob, data, status:)
+      send_data data,
+                type: blob.content_type_for_serving,
+                disposition: blob.forced_disposition_for_serving || "inline",
+                filename: blob.filename.sanitized,
+                status: status
     end
   end
 end

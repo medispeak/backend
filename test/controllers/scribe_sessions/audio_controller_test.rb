@@ -33,6 +33,45 @@ class ScribeSessions::AudioControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_user_session_path
   end
 
+  # The test above passed while production answered 500 to exactly that request.
+  # ActiveStorage::Streaming brings ActionController::Live, which runs the action
+  # and its before_actions on a child thread; Warden signals "not signed in" by
+  # `throw :warden`, caught by its middleware back on the request thread, so off
+  # -thread the throw finds no catch and the redirect becomes an UncaughtThrowError.
+  # The integration stack does not reproduce that, so this asserts the cause
+  # instead of the symptom: this controller must never be a Live one.
+  test "does not stream through ActionController::Live" do
+    assert_not ScribeSessions::AudioController.include?(ActionController::Live),
+               "ActionController::Live breaks Warden's redirect for signed-out requests"
+    assert_not ScribeSessions::AudioController.include?(ActiveStorage::Streaming),
+               "ActiveStorage::Streaming includes ActionController::Live"
+  end
+
+  test "answers an unsatisfiable range instead of raising" do
+    sign_in @user
+    get audio_path(@session, "file", @file.id), headers: { "Range" => "bytes=9999-99999" }
+
+    assert_response :range_not_satisfiable
+  end
+
+  # A media element never asks for more than one range, and only one is honoured.
+  test "refuses a multipart range" do
+    sign_in @user
+    get audio_path(@session, "file", @file.id), headers: { "Range" => "bytes=0-1,4-5" }
+
+    assert_response :range_not_satisfiable
+  end
+
+  # Not a byte-range unit — Rack reports no ranges, and the whole file is the
+  # right answer rather than a 416.
+  test "ignores a range in units it does not understand" do
+    sign_in @user
+    get audio_path(@session, "file", @file.id), headers: { "Range" => "seconds=0-5" }
+
+    assert_response :success
+    assert_equal "0123456789", response.body
+  end
+
   # --- Authorization ---------------------------------------------------------
 
   test "streams a stored audio file to its own account" do
