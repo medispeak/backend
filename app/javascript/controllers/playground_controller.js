@@ -293,6 +293,13 @@ export default class extends Controller {
       await this.apiFetch(`/scribe_sessions/${this.session}/commit`, { method: "POST" })
       this.startPolling(POLL_MS_PROCESSING)
     } catch (err) {
+      // A commit refused because the session is ALREADY processing (or done)
+      // means an earlier commit landed and only its response was lost — the
+      // run is under way. Poll it rather than dead-end on a 409 whose text
+      // says, in effect, "it's working".
+      if (err.status === 409 && /from status (processing|completed)/.test(err.message)) {
+        return this.startPolling(POLL_MS_PROCESSING)
+      }
       this.fail(err.message, { retryable: true })
     }
   }
@@ -644,7 +651,12 @@ export default class extends Controller {
     if (!response.ok) {
       // 401 carries no body at all, so this must not assume JSON.
       const payload = await response.json().catch(() => ({}))
-      throw new Error(payload.error?.message || `Request failed (${response.status})`)
+      const error = new Error(payload.error?.message || `Request failed (${response.status})`)
+      // Callers that need to tell one failure from another (retry() reading a
+      // 409 as "already running") get the status and API code, not just prose.
+      error.status = response.status
+      error.code = payload.error?.code
+      throw error
     }
 
     return response.status === 204 ? {} : response.json()
