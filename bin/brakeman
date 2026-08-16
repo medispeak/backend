@@ -2,6 +2,14 @@
 require "rubygems"
 require "bundler/setup"
 
-ARGV.unshift("--ensure-latest")
+# NOTE: the generated binstub prepended "--ensure-latest" here, which makes
+# Brakeman exit 5 whenever a newer version exists on rubygems.org — even with
+# zero warnings. That turns CI red on somebody else's release schedule rather
+# than on anything in this repository, and it is how `scan_ruby` came to fail on
+# every run for weeks (Brakeman 8.0.5 locked, 8.0.6 published).
+#
+# Staying current is Dependabot's job (.github/dependabot.yml runs bundler
+# daily), so the scan just runs the locked version and fails only on real
+# findings.
 
 load Gem.bin_path("brakeman", "brakeman")
