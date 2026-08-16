@@ -9,5 +9,10 @@ Rails.application.config.filter_parameters += [
   # The chunked and segmented upload paths carry the same recorded speech as
   # :audio under different param names, so they need the same treatment — an
   # unfiltered :segment writes PHI straight to the Rails log.
-  :segment, :chunk
+  :segment, :chunk,
+  # The OCR modality's upload param. An uploaded file logs as its
+  # original_filename, and lab reports are named after the patient far more
+  # often than not ("ramesh-kumar-cbc-2026-08.pdf"), so leaving :document
+  # unfiltered writes identifiers into every request line.
+  :document
 ]

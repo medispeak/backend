@@ -130,6 +130,197 @@ module Api
         assert_equal "document_upload_failed", JSON.parse(response.body).dig("error", "code")
       end
 
+      # ── upload hardening ─────────────────────────────────────────────────
+
+      # /Count is written by whoever made the file. Trusting it let a 40-page
+      # report declare itself as 1, slipping under MAX_DOCUMENT_PAGES and under
+      # the per-page credit hold while still costing 40 pages of vision tokens.
+      test "a PDF understating its own page count is counted by walking the page tree" do
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 3, declared: 1) }, headers: @headers
+        assert_response :ok
+        assert_equal 3, JSON.parse(response.body)["pages"]
+      end
+
+      # A 300-byte file declaring a four-billion-entry xref subsection used to
+      # spin a Puma thread for hours; three of them took the whole pool down.
+      # The assertion that matters is that the request RETURNS, quickly.
+      test "a PDF declaring an enormous xref table cannot hang the request" do
+        session_id = create_document_session
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: xref_bomb_upload }, headers: @headers
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+        assert_response :unprocessable_entity
+        assert_operator elapsed, :<,
+                        Api::V2::ScribeSessionsController::PDF_PARSE_TIMEOUT_SECONDS + 5,
+                        "hostile PDF parsing was not bounded"
+      end
+
+      # pdf-reader walks /Kids with no cycle guard, so a page tree that lists
+      # itself as its own kid recurses until the stack blows. SystemStackError is
+      # NOT a StandardError, so a bare `rescue StandardError` misses it and the
+      # walk 500s on a public endpoint — a regression the page-tree fix
+      # introduced, since the old declared-/Count read returned a clean 200.
+      test "a PDF whose page tree contains a cycle is a 422, not a 500" do
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: cyclic_pdf_upload }, headers: @headers
+
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+      end
+
+      test "the page cap is enforced across separate uploads, not just per file" do
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 15) }, headers: @headers
+        assert_response :ok
+        assert_equal 15, JSON.parse(response.body)["pages"]
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 10) }, headers: @headers
+        assert_response :unprocessable_entity
+        assert_equal "document_upload_failed", JSON.parse(response.body).dig("error", "code")
+        assert_equal 15, ScribeSession.find(session_id).document_pages, "a rejected upload must not increment"
+      end
+
+      # ── completeness + billing ───────────────────────────────────────────
+
+      # The failure that used to be invisible: a 200 whose finish_reason says the
+      # model ran out of budget mid-report. The extracted half must NOT become
+      # the transcript, and the session must not read as completed.
+      test "a truncated extraction fails the session instead of persisting half a report" do
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: "Hemoglobin | 13.5" }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json
+        )
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 12) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        session = ScribeSession.find(session_id)
+        assert_equal "failed", session.status
+        assert_nil session.transcript
+      end
+
+      # The provider counted those tokens whether or not we could use them, so
+      # the attempt is recorded — as :failed, and without deducting credits,
+      # because the customer is not charged for a run that produced nothing.
+      test "a billed-but-unusable OCR attempt is recorded as a failed usage event" do
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: "partial" }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json
+        )
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 12) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        event = UsageEvent.find_by(scribe_session_id: session_id, function: "ocr")
+        assert event, "the billed attempt was absorbed silently"
+        assert_equal "failed", event.status
+        assert_equal 900, event.input_tokens
+        assert_equal 4096, event.output_tokens
+        # The adapter's usage carries no page count — only the success path
+        # grafts one on — so without help this prices the per-page component at
+        # zero and hides the quantity the commit hold was sized on.
+        assert_equal 12, event.pages
+      end
+
+      # A truncated primary that falls back is TWO physical attempts, and the
+      # provider billed both. Llm::Caller used to drop the primary's error on
+      # the floor, so its tokens were recorded nowhere at all.
+      test "an attempt abandoned for the fallback provider is still metered" do
+        model = create(:ai_model, api_model_id: "gpt-4o-mini")
+        fallback = create(:ai_model, api_model_id: "claude-3-5-sonnet-latest",
+                                     ai_provider: create(:ai_provider, kind: "anthropic",
+                                                                       base_url: "https://api.anthropic.com"))
+        create(:model_assignment, scope_type: "System", scope_id: nil, function: "ocr",
+                                  ai_model: model, fallback_ai_model: fallback)
+
+        # Primary: billed, truncated, unusable. Fallback: the full extraction.
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: "partial" }, finish_reason: "length" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json
+        )
+        stub_request(:post, "https://api.anthropic.com/v1/messages").to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { id: "m", type: "message", role: "assistant", stop_reason: "end_turn",
+                  content: [ { type: "text", text: "Hemoglobin | 13.5 g/dL" } ],
+                  usage: { input_tokens: 800, output_tokens: 250 } }.to_json
+        )
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        session = ScribeSession.find(session_id)
+        assert_includes session.transcript.text, "Hemoglobin"
+
+        events = UsageEvent.where(scribe_session_id: session_id, function: "ocr").order(:id)
+        assert_equal 2, events.count, "the abandoned primary attempt was billed to nobody"
+        assert_equal %w[failed finalized], events.map(&:status)
+        assert_equal 4096, events.first.output_tokens
+      end
+
+      # A transport failure returned no tokens, so there is nothing to record —
+      # recording a zero-cost row would just be noise in the ledger.
+      test "a transport failure records no usage event" do
+        stub_request(:post, CHAT_URL).to_return(status: 500, body: "boom")
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        assert_equal "failed", ScribeSession.find(session_id).status
+        assert_equal 0, UsageEvent.where(scribe_session_id: session_id, function: "ocr").count
+      end
+
+      # Re-commit after a failed extraction runs OCR again — a second provider
+      # call, a second charge — so it must not collide with the first attempt's
+      # dedupe key and vanish.
+      test "re-committing after a failed extraction meters the second attempt separately" do
+        stub_request(:post, CHAT_URL).to_return(
+          # Attempt one: billed, truncated, unusable.
+          { status: 200, headers: { "Content-Type" => "application/json" },
+            body: { choices: [ { message: { content: "partial" }, finish_reason: "length" } ],
+                    usage: { prompt_tokens: 900, completion_tokens: 4096 } }.to_json },
+          # Attempt two: the full extraction, then structuring.
+          { status: 200, headers: { "Content-Type" => "application/json" },
+            body: { choices: [ { message: { content: "Hemoglobin | 13.5 g/dL" }, finish_reason: "stop" } ],
+                    usage: { prompt_tokens: 900, completion_tokens: 300 } }.to_json },
+          { status: 200, headers: { "Content-Type" => "application/json" },
+            body: { choices: [ { message: { content: {}.to_json }, finish_reason: "stop" } ],
+                    usage: { prompt_tokens: 100, completion_tokens: 10 } }.to_json }
+        )
+
+        session_id = create_document_session
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: 2) }, headers: @headers
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+        assert_equal "failed", ScribeSession.find(session_id).status
+
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+        session = ScribeSession.find(session_id)
+        assert_equal "completed", session.status
+        assert_includes session.transcript.text, "Hemoglobin"
+
+        events = UsageEvent.where(scribe_session_id: session_id, function: "ocr").order(:id)
+        assert_equal 2, events.count, "the retried OCR call was billed to nobody"
+        assert_equal %w[failed finalized], events.map(&:status)
+      end
+
       private
 
       def create_document_session
@@ -140,12 +331,14 @@ module Api
       end
 
       # A structurally valid multi-page PDF built with correct xref offsets so
-      # pdf-reader parses it.
-      def minimal_pdf(pages: 1)
+      # pdf-reader parses it. `declared` overrides the /Count entry independently
+      # of how many page objects actually exist, which is how a hostile file
+      # understates its size.
+      def minimal_pdf(pages: 1, declared: nil)
         kids = (0...pages).map { |i| "#{3 + i} 0 R" }.join(" ")
         objects = []
         objects << "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        objects << "2 0 obj\n<< /Type /Pages /Kids [#{kids}] /Count #{pages} >>\nendobj\n"
+        objects << "2 0 obj\n<< /Type /Pages /Kids [#{kids}] /Count #{declared || pages} >>\nendobj\n"
         pages.times do |i|
           objects << "#{3 + i} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
         end
@@ -164,10 +357,47 @@ module Api
         header + body + xref + trailer
       end
 
-      def pdf_upload(pages: 1)
+      def pdf_upload(pages: 1, declared: nil)
         file = Tempfile.new([ "report", ".pdf" ])
         file.binmode
-        file.write(minimal_pdf(pages: pages))
+        file.write(minimal_pdf(pages: pages, declared: declared))
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "application/pdf")
+      end
+
+      # Tiny, structurally plausible, and claims an xref subsection with four
+      # billion entries. pdf-reader loops that count verbatim.
+      def xref_bomb_upload
+        header = "%PDF-1.4\n"
+        body = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" \
+               "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n" \
+               "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        xref_pos = header.bytesize + body.bytesize
+        xref = "xref\n0 4000000000\n0000000000 65535 f \n"
+        trailer = "trailer\n<< /Size 4000000000 /Root 1 0 R >>\nstartxref\n#{xref_pos}\n%%EOF\n"
+
+        file = Tempfile.new([ "bomb", ".pdf" ])
+        file.binmode
+        file.write(header + body + xref + trailer)
+        file.rewind
+        Rack::Test::UploadedFile.new(file.path, "application/pdf")
+      end
+
+      # 238 bytes: the /Pages node lists itself as its own kid, so a page-tree
+      # walk with no cycle guard recurses until the stack overflows.
+      def cyclic_pdf_upload
+        header = "%PDF-1.4\n"
+        body = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" \
+               "2 0 obj\n<< /Type /Pages /Kids [2 0 R] /Count 1 >>\nendobj\n"
+        offsets = [ header.bytesize, header.bytesize + 50 ]
+        xref_pos = header.bytesize + body.bytesize
+        xref = +"xref\n0 3\n0000000000 65535 f \n"
+        offsets.each { |o| xref << format("%010d 00000 n \n", o) }
+        trailer = "trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n#{xref_pos}\n%%EOF\n"
+
+        file = Tempfile.new([ "cyclic", ".pdf" ])
+        file.binmode
+        file.write(header + body + xref + trailer)
         file.rewind
         Rack::Test::UploadedFile.new(file.path, "application/pdf")
       end
