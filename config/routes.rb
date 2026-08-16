@@ -31,7 +31,14 @@ Rails.application.routes.draw do
   # ---------------------------------------------------------------------------
   # Application UI
   # ---------------------------------------------------------------------------
-  resources :scribe_sessions, only: [ :index, :show ]
+  resources :scribe_sessions, only: [ :index, :show ] do
+    # One part of the consultation's recording, streamed behind the same policy
+    # as the page that plays it. A session's audio is either one stored blob or
+    # a clip per speech segment (see AudioPlayback), so the player addresses it
+    # a part at a time rather than as a single file.
+    get "audio/:source/:source_id", to: "scribe_sessions/audio#show", as: :audio,
+        constraints: { source: /file|segment/ }
+  end
 
   # Pages and form fields are authored inside the template builder (nested
   # attributes), so they have no standalone CRUD surface of their own.

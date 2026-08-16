@@ -47,6 +47,15 @@
 </section>
 
 <%#
+  Hear it back. In the playground this is not a convenience: when a field comes
+  out wrong the first question is always whether the model misheard or
+  mis-extracted, and that is only answerable by listening to what it was given.
+%>
+<% if session.audio_available? %>
+  <%= render "scribe_sessions/recording", scribe_session: session %>
+<% end %>
+
+<%#
   Per-stage breakdown — the reason to run this twice with different models.
 
   Grouped by stage + model rather than listed per event: a streamed recording
