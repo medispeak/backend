@@ -1,4 +1,13 @@
 <% content_for :title, "Try #{@template.name}" %>
+<%#
+  Never restored from Turbo's snapshot cache. This page holds live state — a
+  microphone, a session being billed, a chosen file, a run in flight — none of
+  which survives a navigation, while the snapshot would faithfully restore the
+  DOM that described it. connect() resets the controller to idle/audio, so a
+  Back-button restoration would otherwise show the upload UI while the
+  controller creates audio sessions and every Extract 409s. Fetch fresh instead.
+%>
+<% content_for :head, tag.meta(name: "turbo-cache-control", content: "no-cache") %>
 
 <%= render "shared/page_header",
       title: "Try #{@template.name}",
@@ -45,12 +54,18 @@
       mode switch rather than on separate screens. The status line, step badges
       and error panel below are shared by both for the same reason.
     %>
-    <div class="pg-modes" role="tablist" aria-label="Source">
-      <button type="button" role="tab" aria-selected="true"
+    <%#
+      A group of toggle buttons (aria-pressed), not a tablist: tabs promise
+      panels, aria-controls and arrow-key navigation, none of which apply to a
+      switch that changes what one shared card does. Two focusable buttons is
+      the honest description of this control.
+    %>
+    <div class="pg-modes" role="group" aria-label="Source">
+      <button type="button" aria-pressed="true"
               data-playground-target="modeAudio"
               data-action="playground#useAudio"
               class="pg-mode pg-mode-on">Record audio</button>
-      <button type="button" role="tab" aria-selected="false"
+      <button type="button" aria-pressed="false"
               data-playground-target="modeDocument"
               data-action="playground#useDocument"
               class="pg-mode">Upload a report</button>

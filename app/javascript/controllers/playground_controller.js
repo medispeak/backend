@@ -68,7 +68,7 @@ export default class extends Controller {
     this.state = "idle"
     this.modality = "audio"
     this.files = []
-    this.committed = false
+    this.uploaded = false
     this.seq = 0
     this.inflight = 0
     this.session = null
@@ -138,8 +138,8 @@ export default class extends Controller {
     const doc = modality === "document"
     this.modeAudioTarget.className = `pg-mode${doc ? "" : " pg-mode-on"}`
     this.modeDocumentTarget.className = `pg-mode${doc ? " pg-mode-on" : ""}`
-    this.modeAudioTarget.setAttribute("aria-selected", String(!doc))
-    this.modeDocumentTarget.setAttribute("aria-selected", String(doc))
+    this.modeAudioTarget.setAttribute("aria-pressed", String(!doc))
+    this.modeDocumentTarget.setAttribute("aria-pressed", String(doc))
 
     this.recordTarget.classList.toggle("hidden", doc)
     this.pickTarget.classList.toggle("hidden", !doc)
@@ -163,7 +163,12 @@ export default class extends Controller {
     this.fileInputTarget.click()
   }
 
+  // The sr-only input is still keyboard-reachable, so this can fire mid-run
+  // even though the orb refuses to open the dialog then. Swapping the file list
+  // under a running upload loop would arm Extract for a second, concurrent
+  // session — ignore it, the way every other control is inert while busy.
   filesChosen() {
+    if (this.state === "processing") return
     this.hideError()
     this.files = Array.from(this.fileInputTarget.files || [])
     this.renderFileList()
@@ -206,7 +211,7 @@ export default class extends Controller {
     }
 
     list.classList.toggle("hidden", this.files.length === 0)
-    this.extractTarget.disabled = this.files.length === 0 || Boolean(rejection)
+    this.extractTarget.disabled = this.state === "processing" || this.files.length === 0 || Boolean(rejection)
     if (rejection) this.showError(rejection)
 
     if (this.files.length && !rejection && this.state === "idle") {
@@ -216,14 +221,18 @@ export default class extends Controller {
   }
 
   async extract() {
+    // A second Extract while the first is uploading would open a second
+    // session against the same files; the button is disabled while busy, but
+    // the guard belongs here too, where the session is actually created.
+    if (this.state === "processing") return
     if (!this.files.length || this.rejectionFor(this.files)) return
 
     this.hideError()
     this.resetFields()
     this.setState("processing")
-    // Cleared until the commit lands, so retry() knows whether the session on
-    // the server is a complete document or a half-uploaded one.
-    this.committed = false
+    // Cleared until every file has landed, so retry() knows whether the session
+    // on the server holds the complete document or a half-uploaded one.
+    this.uploaded = false
 
     try {
       const session = await this.createSession()
@@ -239,9 +248,14 @@ export default class extends Controller {
         body.append("document", file, file.name)
         await this.apiFetch(`/scribe_sessions/${this.session}/documents`, { method: "POST", body })
       }
+      // Set BEFORE the commit, not after it: once every page is stored the
+      // session is complete, and if the commit call itself fails — or the
+      // server accepts it and the response is lost — the honest retry is to
+      // commit THAT session again, not to upload the whole report to a new one
+      // (which, when the first commit had in fact landed, bills two OCR runs).
+      this.uploaded = true
 
       await this.apiFetch(`/scribe_sessions/${this.session}/commit`, { method: "POST" })
-      this.committed = true
       this.startPolling(POLL_MS_PROCESSING)
     } catch (err) {
       this.fail(err.message, { retryable: true })
@@ -267,7 +281,7 @@ export default class extends Controller {
   // the server-side truncation guard exists to prevent. Start over instead, on
   // a fresh session, so every page is uploaded again.
   async retry() {
-    if (this.modality === "document" && !this.committed) {
+    if (this.modality === "document" && !this.uploaded) {
       this.session = null
       this.token = null
       return this.extract()
@@ -710,6 +724,9 @@ export default class extends Controller {
     this.recordTarget.setAttribute("aria-label", recording ? "Stop recording" : "Start recording")
     this.pickTarget.className = `pg-orb pg-orb-${busy ? "busy" : "idle"}${document_ ? "" : " hidden"}`
     this.pickTarget.disabled = busy
+    // The input itself too: it is sr-only, not display:none, so it is still in
+    // the tab order when the orb that fronts it is disabled.
+    this.fileInputTarget.disabled = busy
     this.extractTarget.disabled = busy || this.files.length === 0 || Boolean(this.rejectionFor(this.files))
 
     // A mid-run switch would orphan a session that is already being billed.

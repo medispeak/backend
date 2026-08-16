@@ -103,7 +103,7 @@ isolation, metering, status rollup, webhooks) is the shared path, which is the
 whole reason OCR was modelled as a transcript-producing stage rather than a
 parallel pipeline.
 
-```
+```text
 POST /:id/documents  (one call per file, in page order)
   │  content-type allowlist + 10 MB per file
   │  count_pages: walk the PDF /Pages tree — NOT its self-declared /Count —
@@ -119,7 +119,10 @@ Orchestrator#transcript_from_documents!
   ▼
 Scribe::OcrStage
   │  max_tokens sized from the page count (2000/page, floored and capped) —
-  │  the adapters' 4096 default is a structuring budget and truncates a report
+  │  the adapters' 4096 default is a structuring budget and truncates a report;
+  │  each adapter then clamps it to what ITS model accepts (capabilities.
+  │  max_output_tokens, else a per-provider default), because a budget above
+  │  the model's ceiling is a 400 before any work is done
   │  Llm::Caller.ocr → primary, then fallback on a TRANSIENT error
   ▼
 Transcript (the audit trail of what the model read) → StructuringStage per output
@@ -131,7 +134,10 @@ out of output budget fails instead of persisting half a lab report that reads
 as complete. It is raised *inside* the adapter deliberately: only an error
 raised during the attempt is visible to `Llm::Caller`, which is what turns a
 truncation into a fallback attempt rather than an immediate session failure.
-`OcrStage` repeats the check as a backstop for any future adapter that forgets.
+A `refusal` / `content_filter` stop is raised as `Llm::Refused` instead — a
+decision, not a fault, so it is reported as such and not retried on the
+fallback. `OcrStage` repeats the completeness check as a backstop for any
+future adapter that forgets.
 
 **Billed-but-unusable attempts are recorded.** A truncated or empty completion
 still consumed tokens the provider will invoice, so `Llm::Error` carries that
