@@ -1,0 +1,32 @@
+meta {
+  name: Get Usage
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v2/usage
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~from: 2026-01-01T00:00:00Z
+  ~to: 2026-12-31T23:59:59Z
+  ~scope: subtree
+  ~user_id: 1
+  ~group_by: user
+}
+
+docs {
+  Aggregates the account's finalized usage events: `total_cost`,
+  `total_tokens`, `total_audio_seconds`, and a `by_model` breakdown.
+
+  Optional params (all disabled by default — enable as needed):
+  - `from` / `to` — ISO8601 window bounds (default: all time)
+  - `scope=subtree` — aggregate the whole tenancy subtree
+  - `user_id=N` — filter to one user (404 if outside the caller's subtree)
+  - `group_by=user|account` — adds a `by_user` / `by_account` array
+
+  See docs/metering-and-billing.md for the full model.
+}

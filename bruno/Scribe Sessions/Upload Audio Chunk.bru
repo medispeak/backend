@@ -1,0 +1,32 @@
+meta {
+  name: Upload Audio Chunk
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/audio/chunks
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  seq: 0
+  chunk: @file(chunk-0.webm)
+  ~final: true
+}
+
+docs {
+  Resumable storage upload: one part of the session's audio, identified by a
+  non-negative `seq` ordering index (multipart fields `seq` + `chunk`, optional
+  `final: true` on the last part). Parts are reassembled at commit. Re-POSTing
+  a seq is idempotent (overwrites that part).
+
+  - 200 — `{ "received": <seq> }`
+  - 422 — negative seq, chunk too large, unsupported audio content type, or
+    running total over the 25MB session cap
+  - 404 / 409 / 410 — as for Upload Audio
+
+  Use Audio Status to learn which seqs the server already holds after an
+  interrupted upload.
+}

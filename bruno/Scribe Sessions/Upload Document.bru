@@ -1,0 +1,30 @@
+meta {
+  name: Upload Document
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/documents
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  document: @file(lab_report.pdf)
+}
+
+docs {
+  For sessions created with `"modality": "document"` (lab-report OCR). Attaches
+  one document (multipart field `document`) and moves the session to
+  `uploading`. At commit a vision model extracts the document text, then the
+  declared outputs are structured from it exactly as for audio.
+
+  Allowed types: application/pdf, image/jpeg, image/png, image/webp.
+  Limits: 10MB per file, 20MB and 20 pages per session (an image counts as one
+  page; pages are counted at upload).
+
+  - 200 — `{ "id": <id>, "status": "uploading", "pages": <running total> }`
+  - 409 validation_error — uploading a document to an `audio` session
+  - 422 — bad type, size, page cap, or unreadable/encrypted PDF
+}

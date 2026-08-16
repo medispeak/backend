@@ -1,0 +1,28 @@
+meta {
+  name: Mint Session Token
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/tokens
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setEnvVar("sessionToken", res.getBody().token);
+  }
+}
+
+docs {
+  Account token only. Mints a short-lived, session-scoped token a browser
+  client uses to drive this one session's upload/read routes without holding
+  the account secret. Stored in the `sessionToken` env var.
+
+  - 201 — `{ "token": "...", "expires_at": "..." }`
+  - 404 session_not_found
+
+  To use it, override the request's auth with `Bearer {{sessionToken}}`.
+}

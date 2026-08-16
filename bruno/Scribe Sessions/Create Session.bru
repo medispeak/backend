@@ -1,0 +1,51 @@
+meta {
+  name: Create Session
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions
+  body: json
+  auth: inherit
+}
+
+headers {
+  Idempotency-Key: {{$guid}}
+}
+
+body:json {
+  {
+    "language_hint": "en",
+    "mode": "consultation",
+    "outputs": [
+      { "type": "transcript" }
+    ]
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setEnvVar("sessionId", res.getBody().id);
+  }
+}
+
+docs {
+  Creates a scribe session declaring the desired outputs. 201 returns the
+  serialized session; its `id` is stored in the `sessionId` env var for the
+  rest of the collection.
+
+  Output types:
+  - `{ "type": "transcript" }` — source-language transcript text.
+  - `{ "type": "form", "page_id": <id>, "context": {...} }` — structure the
+    transcript against a Page's form fields (`page_id` required).
+  - `{ "type": "note", "template_ref": "<prompt>", "page_id": <id> }` —
+    free-text clinical note.
+
+  Other body fields: `modality` ("audio" default, or "document" for lab-report
+  OCR), `language_hint` (en/hi/ta/auto), `mode` (consultation/dictation),
+  `callback_url` (completion webhook).
+
+  422 validation_error on blank outputs, unknown type, or bad page_id.
+  Sessions expire 24h after creation.
+}

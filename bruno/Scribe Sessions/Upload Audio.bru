@@ -1,0 +1,28 @@
+meta {
+  name: Upload Audio
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/audio
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  audio: @file(consultation.m4a)
+}
+
+docs {
+  Single-shot audio upload (multipart field `audio`). Moves the session to
+  `uploading`. Pick a real audio file in the body tab before sending.
+
+  - 200 — `{ "id": <id>, "status": "uploading" }`
+  - 404 session_not_found / 410 session_expired
+  - 409 validation_error — session was created with `"modality": "document"`
+  - 422 — unsupported content type or file over the 25MB session cap
+
+  Uploading more than once is allowed; the orchestrator processes the first
+  attached blob. For resumable uploads use Upload Audio Chunk instead.
+}

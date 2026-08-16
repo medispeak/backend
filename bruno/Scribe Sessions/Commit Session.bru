@@ -1,0 +1,28 @@
+meta {
+  name: Commit Session
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/commit
+  body: none
+  auth: inherit
+}
+
+headers {
+  Idempotency-Key: {{$guid}}
+}
+
+docs {
+  The canonical billable, idempotent operation: places a quota hold, sets the
+  session to `processing`, and enqueues background processing. A duplicate
+  commit replays the prior response rather than re-enqueuing (internal
+  fingerprint `commit:<session_id>` in addition to the Idempotency-Key header).
+
+  - 202 — serialized session with `status: "processing"`
+  - 402 insufficient_credit — quota hold failed
+  - 404 session_not_found / 410 session_expired
+
+  After committing, poll Get Session until the HTTP status is 200 or 206.
+}

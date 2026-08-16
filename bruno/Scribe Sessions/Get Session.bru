@@ -1,0 +1,24 @@
+meta {
+  name: Get Session
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Poll / show. The HTTP status encodes progress so a polling client can branch
+  on the status line alone:
+
+  - 200 — `completed` or `failed`
+  - 206 — `partial` (mixed output results)
+  - 202 — still in flight (`created`, `uploading`, `processing`)
+  - 404 — unknown or cross-account id
+
+  Each output carries `type`, `status` (pending/success/partial/failure),
+  `result`, and `errors`.
+}

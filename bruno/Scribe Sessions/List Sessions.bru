@@ -1,0 +1,21 @@
+meta {
+  name: List Sessions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v2/scribe_sessions
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~limit: 50
+  ~offset: 0
+}
+
+docs {
+  Lists the account's sessions, newest first. `limit` is clamped server-side;
+  `offset` floors at 0. Response: `{ "scribe_sessions": [ ... ] }`.
+}

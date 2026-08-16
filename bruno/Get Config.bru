@@ -1,0 +1,17 @@
+meta {
+  name: Get Config
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v2/config
+  body: none
+  auth: inherit
+}
+
+docs {
+  Account-scoped discovery payload: supported `languages`, the account's
+  non-archived `templates` (id + name), and `limits.rpm` (the account's
+  rate-limit budget, default 120 requests/minute).
+}

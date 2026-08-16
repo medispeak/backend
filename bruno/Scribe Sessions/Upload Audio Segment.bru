@@ -1,0 +1,30 @@
+meta {
+  name: Upload Audio Segment
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/audio/segments
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  seq: 0
+  segment: @file(segment-0.webm)
+}
+
+docs {
+  Realtime transcription stream: one STANDALONE, independently-decodable audio
+  segment (multipart fields `seq` + `segment`). Each segment is transcribed on
+  arrival, and the final transcript is assembled from the ordered segment texts
+  at commit.
+
+  This is a separate stream from the storage `audio/chunks` upload and is NOT
+  counted against the 25MB storage cap. Re-POSTing a seq is idempotent (never
+  re-transcribes).
+
+  - 200 — `{ "received": <seq> }`
+  - 422 / 404 / 409 / 410 — same guards as Upload Audio Chunk
+}

@@ -1,0 +1,25 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{apiToken}}
+}
+
+docs {
+  # Medispeak v2 API
+
+  Async, metered, multi-tenant public API. Full reference: docs/api/v2.md.
+
+  Flow: create a scribe session declaring outputs -> upload audio (or a
+  document) -> commit (billable, idempotent) -> poll GET /:id until the HTTP
+  status is 200/206 (202 means still processing), or receive the webhook.
+
+  Every request authenticates with `Authorization: Bearer {{apiToken}}`
+  (an `msk_live_...` account token minted on /api_tokens). Set `apiToken`
+  and `baseUrl` in the environment.
+
+  The "Create Session" and "Mint Session Token" requests store `sessionId`
+  and `sessionToken` env vars from their responses so the rest of the
+  collection chains without copy-pasting ids.
+}

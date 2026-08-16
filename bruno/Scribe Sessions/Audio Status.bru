@@ -1,0 +1,18 @@
+meta {
+  name: Audio Status
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v2/scribe_sessions/{{sessionId}}/audio/status
+  body: none
+  auth: inherit
+}
+
+docs {
+  Resume helper for chunked uploads: reports which chunk seqs the server
+  already holds so the client only re-sends the gaps.
+
+  200 — `{ "received_seqs": [0, 1, ...], "final_seen": false, "bytes": 123456 }`
+}
