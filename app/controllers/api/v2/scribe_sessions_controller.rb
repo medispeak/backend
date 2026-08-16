@@ -139,8 +139,7 @@ module Api
           render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
           return
         end
-        other_bytes = session.audio_chunks.where.not(seq: seq)
-                             .with_attached_data.sum { |c| c.data.blob&.byte_size.to_i }
+        other_bytes = attached_bytes(session.audio_chunks.where.not(seq: seq))
         if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
           render_error(code: "audio_upload_failed", message: "total audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
           return
@@ -212,8 +211,7 @@ module Api
           render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
           return
         end
-        other_bytes = session.transcript_segments.where.not(seq: seq)
-                             .with_attached_data.sum { |s| s.data.blob&.byte_size.to_i }
+        other_bytes = attached_bytes(session.transcript_segments.where.not(seq: seq))
         if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
           render_error(code: "audio_upload_failed", message: "total segment audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
           return
@@ -469,6 +467,26 @@ module Api
       COMMIT_ESTIMATE_RATE_PER_PAGE = 0.01
 
       private
+
+      # Total stored bytes across a relation of records with a `data`
+      # attachment, summed in SQL.
+      #
+      # The running-total caps run on EVERY upload, so this must not grow with
+      # the length of the consultation. The obvious
+      # `relation.with_attached_data.sum { |r| r.data.blob&.byte_size.to_i }`
+      # does: it materialises every sibling record, its attachment and its blob
+      # just to add up one integer column, so the 300th segment of a long
+      # consultation dragged back ~900 rows before it could be accepted.
+      def attached_bytes(relation)
+        ActiveStorage::Blob
+          .joins(:attachments)
+          .where(active_storage_attachments: {
+            record_type: relation.klass.name,
+            name: "data",
+            record_id: relation.select(:id)
+          })
+          .sum(:byte_size)
+      end
 
       # Renders a 409 and returns true when the session's modality does not
       # match the upload surface (audio uploads to a document session or vice
