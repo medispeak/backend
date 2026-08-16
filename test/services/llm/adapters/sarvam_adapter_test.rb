@@ -88,9 +88,24 @@ class SarvamAdapterTest < ActiveSupport::TestCase
   test "a 4xx (e.g. audio over the 30s REST cap) maps to BadResponse so Caller falls back" do
     stub_request(:post, ENDPOINT).to_return(
       status: 400, headers: { "Content-Type" => "application/json" },
-      body: { error: { message: "audio too long" } }.to_json
+      body: { error: { message: "audio too long", request_id: "req_9" } }.to_json
     )
-    assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    error = assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    # The provider's human message rides along (it names the actual cause);
+    # raw bodies / request ids do not, since this string reaches API clients.
+    assert_equal "provider request failed (status 400: audio too long)", error.message
+  end
+
+  test "a non-JSON error body is truncated into the message; a transport error keeps its own message" do
+    stub_request(:post, ENDPOINT).to_return(status: 502, body: "<html>Bad gateway from upstream " + ("x" * 400))
+    error = assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    assert_match(/\Aprovider request failed \(status 502: <html>Bad gateway from upstream x+…\)\z/, error.message)
+    assert_operator error.message.length, :<, 260
+    assert_no_match(/false/, error.message)
+
+    stub_request(:post, ENDPOINT).to_raise(Faraday::ConnectionFailed.new("Failed to open TCP connection"))
+    error = assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    assert_equal "provider request failed (Failed to open TCP connection)", error.message
   end
 
   test "a 429 maps to RateLimited" do
