@@ -67,31 +67,45 @@ module Llm
       # Document OCR through the chat endpoint with multimodal content parts:
       # images as base64 data-URL image_url parts, PDFs as base64 file parts
       # (gpt-4o/4.1 family). Returns the full extracted text as Result#text.
-      def ocr(documents:, prompt: nil, **_opts)
+      # max_tokens is supplied by OcrStage, sized from the page count. Sending
+      # none left the extraction capped at whatever the endpoint's default
+      # happened to be, which for a multi-page report is a truncation waiting to
+      # happen. `max_tokens` (rather than `max_completion_tokens`) is what every
+      # OpenAI-compatible endpoint this adapter targets understands.
+      def ocr(documents:, prompt: nil, max_tokens: nil, **_opts)
         started = monotonic
         parts = [ { type: "text", text: prompt.to_s } ]
         documents.each { |doc| parts << document_part(doc) }
 
-        response = client.chat(parameters: {
+        params = {
           model: config.api_model_id,
           messages: [ { role: "user", content: parts } ]
-        })
+        }
+        params[:max_tokens] = max_tokens if max_tokens
+        response = client.chat(parameters: params)
         choice = response.dig("choices", 0) || {}
         finish_reason = choice["finish_reason"]
         text = choice.dig("message", "content")
+        usage = usage_from(response["usage"])
+        elapsed = elapsed_ms(started)
 
-        # Same early-stop guard as #structure: a truncated extraction would
-        # silently drop part of a clinical document.
-        if finish_reason && !%w[stop].include?(finish_reason.to_s)
-          raise Llm::BadResponse, "model did not complete (finish_reason=#{finish_reason})"
+        # Shared with the Anthropic adapter (Llm::Adapter#guard_ocr_completion!)
+        # so one rule decides what "complete" means for every vision provider.
+        # Both raises carry the usage: an unusable 200 is still a billed one.
+        guard_ocr_completion!(finish_reason, usage: usage, latency_ms: elapsed)
+        if text.blank?
+          raise Llm::BadResponse.new(
+            "provider returned no OCR text", usage: usage, latency_ms: elapsed,
+            provider: config.provider_name || config.provider_kind.to_s,
+            model: config.api_model_id
+          )
         end
-        raise Llm::BadResponse, "provider returned no OCR text" if text.blank?
 
         Llm::Result.new(
           text: text,
           model: config.api_model_id,
           provider: config.provider_name || config.provider_kind.to_s,
-          usage: usage_from(response["usage"]),
+          usage: usage,
           finish_reason: finish_reason,
           latency_ms: elapsed_ms(started),
           raw: response

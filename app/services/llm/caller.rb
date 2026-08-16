@@ -32,7 +32,18 @@ module Llm
       raise e unless @config.fallback
 
       rewind_ios(args)
-      attempt(@config.fallback, method, *args, **kwargs)
+      result = attempt(@config.fallback, method, *args, **kwargs)
+
+      # Carry the abandoned attempt forward instead of dropping it. A truncated
+      # or empty 200 is a BILLED response — the provider counted those tokens —
+      # and falling back means the orchestrator only ever sees the success. Left
+      # unattached, the primary's spend is recorded nowhere at all, which is the
+      # exact leak the failed-attempt metering exists to close. Only errors that
+      # actually carry usage are worth passing on; a timeout billed nothing.
+      if result.is_a?(Llm::Result) && e.respond_to?(:billable?) && e.billable?
+        result.discarded_attempts = result.discarded + [ e ]
+      end
+      result
     end
 
     private

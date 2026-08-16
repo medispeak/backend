@@ -46,7 +46,13 @@ module Llm
 
       # Document OCR via the Messages API with native image / document (PDF)
       # content blocks. Returns the full extracted text as Result#text.
-      def ocr(documents:, prompt: nil, **_opts)
+      #
+      # max_tokens is supplied by OcrStage, sized from the page count: the
+      # DEFAULT_MAX_TOKENS below is a structuring budget and truncates a
+      # multi-page report. Whether the response actually completed is checked by
+      # OcrStage#guard_completion! against the finish_reason returned here, so
+      # the guard is applied identically to every provider.
+      def ocr(documents:, prompt: nil, max_tokens: nil, **_opts)
         started = monotonic
 
         blocks = documents.map { |doc| document_block(doc) }
@@ -54,17 +60,21 @@ module Llm
 
         response = client.post("/v1/messages", {
           model: config.api_model_id,
-          max_tokens: config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
+          max_tokens: max_tokens || config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
           messages: [ { role: "user", content: blocks } ]
         })
         resp = response.body
-        text = extract_text(resp)
+        usage = usage_from(resp["usage"])
+        # Ordered before #extract_text: a max_tokens stop still carries real
+        # text, so the blank check below would wave it through.
+        guard_ocr_completion!(resp["stop_reason"], usage: usage, latency_ms: elapsed_ms(started))
+        text = extract_text(resp, usage: usage, latency_ms: elapsed_ms(started))
 
         Llm::Result.new(
           text: text,
           model: config.api_model_id,
           provider: config.provider_name || config.provider_kind.to_s,
-          usage: usage_from(resp["usage"]),
+          usage: usage,
           finish_reason: resp["stop_reason"],
           latency_ms: elapsed_ms(started),
           raw: resp
@@ -84,17 +94,29 @@ module Llm
         { type: doc[:content_type] == "application/pdf" ? "document" : "image", source: source }
       end
 
-      # Joined text blocks. A 2xx with no text is a bad response (refusal or
-      # truncation) and triggers fallback upstream.
-      def extract_text(resp)
+      # Joined text blocks. A 2xx with no text is a bad response (a refusal, or
+      # a completion that spent its budget on nothing) and triggers fallback
+      # upstream. It is still a billed round-trip, so the usage rides along on
+      # the error for the ledger.
+      def extract_text(resp, usage: nil, latency_ms: nil)
         blocks = resp["content"]
-        raise Llm::BadResponse, "Anthropic response missing content blocks" unless blocks.is_a?(Array)
+        unless blocks.is_a?(Array)
+          raise bad_ocr_response("Anthropic response missing content blocks", usage, latency_ms)
+        end
 
         text = blocks.select { |b| b.is_a?(Hash) && b["type"] == "text" }
                      .map { |b| b["text"] }.join("\n")
-        raise Llm::BadResponse, "Anthropic response contained no OCR text" if text.blank?
+        raise bad_ocr_response("Anthropic response contained no OCR text", usage, latency_ms) if text.blank?
 
         text
+      end
+
+      def bad_ocr_response(message, usage, latency_ms)
+        Llm::BadResponse.new(
+          message, usage: usage, latency_ms: latency_ms,
+          provider: config.provider_name || config.provider_kind.to_s,
+          model: config.api_model_id
+        )
       end
 
       def request_body(messages, schema)
