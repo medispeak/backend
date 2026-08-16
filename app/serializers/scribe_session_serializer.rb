@@ -27,8 +27,16 @@ class ScribeSessionSerializer
   # token) can see what this session cost — not just the internal admin. Summed
   # in Ruby from the loaded usage_events association (preloaded on the index) so
   # a session list stays free of an N+1.
+  #
+  # Finalized events only. A billed-but-unusable attempt (a truncated OCR
+  # response the provider still charged us for) is written as a :failed event so
+  # the ledger shows our cost, but it is deliberately not deducted from the
+  # customer's credits — the API promises a run that produced nothing costs
+  # nothing. This object is what the customer reads as "what I was charged", so
+  # it must add up the same way the credit ledger does; the admin usage page
+  # already filters to finalized for the same reason.
   def serialize_usage
-    events = @session.usage_events.to_a
+    events = @session.usage_events.select(&:finalized?)
     {
       cost: events.sum { |e| e.cost.to_f },
       total_tokens: events.sum { |e| e.total_tokens.to_i },

@@ -142,6 +142,11 @@ module Scribe
     # no usage — a timeout, a 5xx, a connection reset — are skipped, because
     # nothing was returned and nothing was billed.
     def meter_failed_attempt(error)
+      # An error can carry the billed attempts Llm::Caller abandoned before it
+      # (primary truncated, then the fallback failed too). Each is a physical
+      # attempt of its own; recorded FIRST so it takes the lower attempt number,
+      # matching the order the provider actually saw them.
+      error.discarded.each { |earlier| meter_failed_attempt(earlier) } if error.respond_to?(:discarded)
       return unless error.respond_to?(:billable?) && error.billable?
 
       function = session.modality_document? ? :ocr : :asr
@@ -157,11 +162,14 @@ module Scribe
         status: :failed,
         # OCR keys by attempt number, so this failure occupies attempt N and a
         # retry's success takes N+1 — one row per physical attempt, which is the
-        # point. Anything else gets an explicit ":failed" suffix so it can never
-        # occupy the key a later SUCCESS needs: that collision would raise
+        # point. Anything else gets an explicit ":failed:N" suffix so it can
+        # never occupy the key a later SUCCESS needs: that collision would raise
         # RecordNotUnique inside the best-effort #meter, skip QuotaGuard.deduct!,
-        # and leave a real charge unbilled and permanently marked failed.
-        dedupe_key: function == :ocr ? dedupe_key_for(:ocr, nil) : "#{session.id}:#{function}:failed"
+        # and leave a real charge unbilled and permanently marked failed. N
+        # counts the failed rows already written for this function, so a second
+        # billed failure (a re-commit that fails the same way) is a second row
+        # rather than a swallowed RecordNotUnique.
+        dedupe_key: function == :ocr ? dedupe_key_for(:ocr, nil) : failed_dedupe_key_for(function)
       )
     rescue StandardError => e
       Rails.logger.error(
@@ -490,6 +498,14 @@ module Scribe
     # reaches here and cannot double-bill.
     def ocr_attempt_number
       session.usage_events.where(function: "ocr").count
+    end
+
+    # Key for a billed-but-unusable attempt of a function that is not metered
+    # per attempt (ASR today). Suffixed with the number of failed rows already
+    # written for that function so repeated failures each get their own row.
+    def failed_dedupe_key_for(function)
+      failed = session.usage_events.where(function: function.to_s, status: "failed").count
+      "#{session.id}:#{function}:failed:#{failed}"
     end
 
     # Adapts a stage result struct to the Llm::Result contract the meter reads.
