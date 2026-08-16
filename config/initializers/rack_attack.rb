@@ -30,33 +30,32 @@ if defined?(Rack::Attack)
                                 period: RPM_PERIOD) do |req|
       next nil unless req.path.start_with?("/api/")
 
-      token = req.get_header("HTTP_AUTHORIZATION").to_s.split(" ").last
       # Resolve the account behind EITHER credential. Scoped session (mss_)
       # tokens are stateless MessageVerifier blobs, not ApiToken rows, so
       # ApiToken.authenticate returns nil for them — without the session-token
       # fallback every browser-token request (audio, segments, live_form,
       # realtime_token, commit) skipped throttling entirely, defeating the
       # per-account cap the whole file exists to enforce.
-      account_id = ApiToken.authenticate(token)&.account_id ||
-                   Rack::Attack.session_token_account_id(token)
+      #
+      # Api::Credential memoizes this into the Rack env, so the controller
+      # reuses the resolution instead of repeating it.
+      credential = Api::Credential.for(req)
+      account_id = Rack::Attack.throttled_account_id(credential)
       next nil if account_id.nil?
 
       # Resolve this account's per-minute budget and stash it so the `limit`
-      # proc above can read it (it receives the same request object).
-      settings = Account.find_by(id: account_id)&.settings || {}
+      # proc above can read it (it receives the same request object). An account
+      # token already carries its account, so only browser traffic pays a lookup.
+      settings = (credential.account || Account.find_by(id: account_id))&.settings || {}
       req.env["rack.attack.account_rpm"] = (settings["rpm"] || DEFAULT_RPM).to_i
 
       account_id
     end
 
-    # Resolve a scoped session token (mss_) to its session's account_id with a
-    # single-column lookup, so browser-token traffic counts against the same
-    # per-account budget as account tokens. Returns nil for an invalid token.
-    def self.session_token_account_id(token)
-      claims = Scribe::SessionToken.verify(token)
-      return nil unless claims
-
-      ScribeSession.where(id: claims["sid"]).pick(:account_id)
+    # The account whose budget this request spends, or nil when the credential
+    # resolves to nobody. A malformed token must never raise out of middleware.
+    def self.throttled_account_id(credential)
+      credential.throttled_account_id
     rescue StandardError
       nil
     end

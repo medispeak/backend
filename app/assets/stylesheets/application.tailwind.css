@@ -399,13 +399,107 @@ button[disabled]        .when-enabled { display: none; }
   100% { background-color: transparent; }
 }
 
+/* ---------------------------------------------------------------------------
+ * Audio player
+ *
+ * A consultation's recording can be one file or a run of speech clips, and the
+ * player has to make that difference invisible: a single bar, a single clock,
+ * with the joins showing only as hairline ticks. The bar is the one thing on a
+ * consultation page you can grab, so it is given a real hit area (the padded
+ * wrapper) while staying visually thin.
+ * ------------------------------------------------------------------------- */
+@layer components {
+  .ap-play {
+    @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm;
+
+    transition: ease 0.2s background-color;
+  }
+  .ap-play:hover { @apply cursor-pointer bg-blue-500; }
+  .ap-play:focus-visible { @apply outline-none ring-2 ring-blue-500 ring-offset-2; }
+
+  .ap-icon { @apply h-5 w-5; }
+  .ap-icon-pause { @apply hidden; }
+  .ap-is-playing .ap-icon-play { @apply hidden; }
+  .ap-is-playing .ap-icon-pause { @apply block; }
+
+  /* Padding gives the pointer a 20px-tall target over a 6px-tall bar; the
+     background is clipped to the content box so it still reads as thin. */
+  .ap-track {
+    @apply relative h-1.5 w-full cursor-pointer rounded-full bg-gray-200;
+
+    touch-action: none;
+  }
+  .ap-track:focus-visible { @apply outline-none ring-2 ring-blue-500 ring-offset-4; }
+
+  .ap-fill {
+    @apply absolute inset-y-0 left-0 rounded-full bg-blue-600;
+
+    width: 0;
+  }
+
+  /* Sits above the fill and below the thumb, so a boundary stays legible on
+     both the played and unplayed side of the bar. */
+  .ap-tick {
+    @apply absolute inset-y-0 block w-px bg-white/70;
+
+    left: 0;
+  }
+
+  .ap-thumb {
+    @apply absolute top-1/2 h-3 w-3 rounded-full border-2 border-white bg-blue-600 opacity-0 shadow;
+
+    left: 0;
+    transform: translate(-50%, -50%);
+    transition: ease 0.15s opacity;
+  }
+  .ap-track:hover .ap-thumb,
+  .ap-track:focus-visible .ap-thumb,
+  .ap-is-playing .ap-thumb { @apply opacity-100; }
+
+  .ap-step {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 no-underline hover:bg-gray-100 hover:text-gray-900;
+  }
+  .ap-step:focus-visible { @apply outline-none ring-2 ring-blue-500; }
+  .ap-step svg { @apply h-4 w-4; }
+
+  .ap-rate {
+    @apply inline-flex h-8 min-w-[2.75rem] items-center justify-center rounded-lg px-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+  }
+  .ap-rate:focus-visible { @apply outline-none ring-2 ring-blue-500; }
+
+  /* The transcript, used as an index into the audio. Scrolls rather than
+     growing the page: a long consultation is forty of these. */
+  .ap-list {
+    @apply max-h-64 overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-100;
+  }
+  .ap-row {
+    @apply flex w-full items-baseline gap-3 px-3 py-2 text-left hover:bg-gray-50;
+  }
+  /* A ring, not a tint: the active row is already bg-blue-50, so tinting on
+     focus would leave a keyboard user with no focus indicator at all on the one
+     row they are most likely to be on. Inset so it does not spill out of the
+     list's rounded border. */
+  .ap-row:focus-visible { @apply outline-none ring-2 ring-inset ring-blue-500; }
+  .ap-row-time {
+    @apply w-12 shrink-0 text-xs tabular-nums text-gray-400;
+  }
+  .ap-row-text {
+    @apply min-w-0 text-sm leading-6 text-gray-700;
+  }
+  .ap-row-active { @apply bg-blue-50; }
+  .ap-row-active .ap-row-time { @apply text-blue-600; }
+  .ap-row-active .ap-row-text { @apply text-gray-900; }
+}
+
 /* Respect a reduced-motion preference across every transition we add. */
 @media (prefers-reduced-motion: reduce) {
   [data-nested-item],
   .nested-enter,
   .pg-orb,
   .pg-bars i,
-  .pg-field-value {
+  .pg-field-value,
+  .ap-play,
+  .ap-thumb {
     transition: none;
   }
 

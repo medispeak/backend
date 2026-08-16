@@ -1,0 +1,203 @@
+<%#
+  --- Recording -------------------------------------------------------------
+  The consultation, played back.
+
+  A session's audio is not always one file — the streaming path stores a clip
+  per stretch of speech — so this is a playlist that has to READ as a single
+  track: one clock, one bar, one play button, with the part boundaries showing
+  only as ticks on the timeline. The Stimulus controller is handed the parts and
+  their known lengths up front so the bar is drawn before a byte is fetched.
+
+  When the parts carry text (the streaming path transcribes each on arrival),
+  they are listed under the transport and each one seeks. That is not a second
+  copy of the Transcript card below: this is an index INTO the audio, which is
+  the only way to answer "what did they actually say there?" without scrubbing
+  blindly.
+%>
+<% parts = scribe_session.audio_parts %>
+<% total = scribe_session.audio_total_seconds %>
+<% timed = parts.any? { |part| part.text.present? } %>
+
+<%
+  part_payload = parts.map do |part|
+    {
+      url: scribe_session_audio_path(scribe_session, source: part.source, source_id: part.source_id),
+      duration: part.duration_seconds.to_f.positive? ? part.duration_seconds.to_f.round(3) : nil
+    }
+  end
+
+  # Cumulative start time of each part, used for the timestamps in the list and
+  # the ticks on the bar. Only meaningful while every part before it has a known
+  # length, which the streaming path always does and a bare blob never does.
+  running = 0.0
+  offsets = parts.map do |part|
+    start = running
+    running += part.duration_seconds.to_f
+    start
+  end
+%>
+
+<section class="card mt-6"
+         data-controller="audio-player"
+         data-audio-player-parts-value="<%= part_payload.to_json %>"
+         data-audio-player-total-value="<%= total.to_f.round(3) %>">
+  <div class="card-header flex flex-wrap items-center justify-between gap-2">
+    <h2 class="text-sm font-semibold text-gray-900">Recording</h2>
+    <p class="num text-xs text-gray-500">
+      <%#
+        Said plainly, because the two shapes are not the same recording: the
+        streaming path keeps only what was spoken, and a listener deserves to
+        know the silence is missing rather than wonder why it sounds clipped.
+      %>
+      <% if parts.first&.source == "segment" %>
+        <%= pluralize(parts.size, "speech segment") %> · silence removed
+      <% else %>
+        <%= pluralize(parts.size, "audio file") %>
+      <% end %>
+    </p>
+  </div>
+
+  <div class="card-pad">
+    <%#
+      One <audio> carries the whole playlist; its source is swapped as parts
+      advance, starting on the first. It only preloads when the server could not
+      tell us how long the recording is — that one request buys the real
+      duration, which beats printing a number we guessed. Otherwise nothing is
+      fetched until someone presses play.
+    %>
+    <audio data-audio-player-target="audio"
+           src="<%= part_payload.first[:url] %>"
+           preload="<%= total ? "none" : "metadata" %>"
+           data-action="ended->audio-player#partEnded
+                        timeupdate->audio-player#tick
+                        loadedmetadata->audio-player#partLoaded
+                        durationchange->audio-player#partLoaded
+                        error->audio-player#partFailed"></audio>
+
+    <div class="flex items-center gap-4">
+      <button type="button"
+              data-audio-player-target="play"
+              data-action="audio-player#toggle"
+              class="ap-play"
+              aria-label="Play recording">
+        <svg class="ap-icon ap-icon-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M8 5.5v13a1 1 0 0 0 1.53.85l10-6.5a1 1 0 0 0 0-1.7l-10-6.5A1 1 0 0 0 8 5.5z"/>
+        </svg>
+        <svg class="ap-icon ap-icon-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="7" y="5" width="4" height="14" rx="1"/>
+          <rect x="13" y="5" width="4" height="14" rx="1"/>
+        </svg>
+      </button>
+
+      <div class="min-w-0 flex-1">
+        <%#
+          role="slider" rather than <input type="range">: the bar carries the
+          part ticks and a range input cannot. Everything the native control
+          would give a keyboard is wired by hand below.
+        %>
+        <div data-audio-player-target="track"
+             data-action="pointerdown->audio-player#scrubStart
+                          pointermove@window->audio-player#scrubMove
+                          pointerup@window->audio-player#scrubEnd
+                          pointercancel@window->audio-player#scrubEnd
+                          keydown->audio-player#keydown"
+             class="ap-track"
+             role="slider"
+             tabindex="0"
+             aria-label="Seek within the recording"
+             aria-valuemin="0"
+             aria-valuemax="<%= total.to_f.round %>"
+             aria-valuenow="0"
+             aria-valuetext="0:00">
+          <div class="ap-fill" data-audio-player-target="fill" aria-hidden="true"></div>
+          <%# One tick per boundary BETWEEN parts; placed by the controller,
+              which is the only thing that knows the corrected lengths. %>
+          <% (parts.size - 1).times do %>
+            <i class="ap-tick" data-audio-player-target="tick" aria-hidden="true"></i>
+          <% end %>
+          <div class="ap-thumb" data-audio-player-target="thumb" aria-hidden="true"></div>
+        </div>
+
+        <div class="mt-2 flex items-center justify-between">
+          <p class="num text-xs tabular-nums text-gray-500">
+            <span data-audio-player-target="elapsed">0:00</span>
+            <span class="text-gray-300">/</span>
+            <span data-audio-player-target="total"><%= total ? format_clock(total) : "--:--" %></span>
+          </p>
+
+          <div class="flex items-center gap-1">
+            <button type="button"
+                    data-action="audio-player#back"
+                    class="ap-step"
+                    title="Back 10 seconds"
+                    aria-label="Back 10 seconds">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M11 5 5.5 9.5 11 14"/>
+                <path d="M5.5 9.5H14a4.5 4.5 0 0 1 0 9h-3"/>
+              </svg>
+            </button>
+            <button type="button"
+                    data-action="audio-player#forward"
+                    class="ap-step"
+                    title="Forward 10 seconds"
+                    aria-label="Forward 10 seconds">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M13 5l5.5 4.5L13 14"/>
+                <path d="M18.5 9.5H10a4.5 4.5 0 0 0 0 9h3"/>
+              </svg>
+            </button>
+            <%# Speed is the reason a clinician opens this page twice. %>
+            <button type="button"
+                    data-audio-player-target="rate"
+                    data-action="audio-player#cycleRate"
+                    class="ap-rate num"
+                    title="Playback speed"
+                    aria-label="Playback speed">1&times;</button>
+            <%#
+              Offered only for a single stored blob: the streaming path's parts
+              are dozens of clips, and a link that hands over one of forty would
+              be a worse answer than no link at all.
+            %>
+            <% if parts.one? %>
+              <%= link_to scribe_session_audio_path(scribe_session,
+                                                    source: parts.first.source,
+                                                    source_id: parts.first.source_id),
+                          class: "ap-step",
+                          download: "",
+                          title: "Download audio",
+                          "aria-label": "Download audio" do %>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 4v11m0 0 4-4m-4 4-4-4"/>
+                  <path d="M5 19h14"/>
+                </svg>
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p data-audio-player-target="error" class="mt-4 hidden rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"></p>
+
+    <% if timed %>
+      <ol data-audio-player-target="list" class="ap-list mt-5">
+        <% parts.each_with_index do |part, index| %>
+          <li>
+            <button type="button"
+                    class="ap-row"
+                    data-audio-player-target="row"
+                    data-action="audio-player#playPart"
+                    data-index="<%= index %>">
+              <span class="ap-row-time num"><%= format_clock(offsets[index]) %></span>
+              <span class="ap-row-text">
+                <%# An unsettled segment has audio but no words yet; say which
+                    rather than render an empty row that looks like a bug. %>
+                <%= part.text.presence || tag.span("Not transcribed", class: "italic text-gray-400") %>
+              </span>
+            </button>
+          </li>
+        <% end %>
+      </ol>
+    <% end %>
+  </div>
+</section>

@@ -91,6 +91,10 @@ production:
     # Connection (host/port/user/password/sslmode) comes from the shared default
     # via env — one managed-Postgres credential (e.g. DO's) serves all four
     # databases below; each just overrides the database name.
+  # Kept configured but NOT used at runtime: production caches in process (see
+  # config/environments/production.rb), so no connection is ever checked out of
+  # this pool. Solid Cache's Record class resolves this mapping at boot, so the
+  # entry must stay for the app to start while the gem is installed.
   cache:
     <<: *primary_production
     database: medispeak_backend_production_cache

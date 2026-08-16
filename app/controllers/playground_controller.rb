@@ -97,7 +97,13 @@ class PlaygroundController < ApplicationController
   # partial the consultation view uses, so the playground and /scribe_sessions
   # cannot drift apart in how a result reads.
   def result
-    session = policy_scope(ScribeSession).find_by(id: params[:session_id])
+    # The segments' attachments come along because the result now plays the
+    # recording back, and asking each segment for its blob one at a time is a
+    # query per segment on a page that has just made dozens of them.
+    session = policy_scope(ScribeSession)
+                .with_attached_audio_files
+                .includes(transcript_segments: { data_attachment: :blob })
+                .find_by(id: params[:session_id])
     if session.nil?
       skip_authorization
       return head :not_found

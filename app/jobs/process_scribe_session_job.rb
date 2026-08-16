@@ -20,13 +20,31 @@
 # swept to :failed by Metering::ReservationSweeper rather than trued up against
 # the ledger (holds are postpaid and reserve no credit balance).
 class ProcessScribeSessionJob < ApplicationJob
-  # Settlement waits up to MAX_SETTLE_ATTEMPTS * SETTLE_WAIT (~2 minutes,
-  # matching STALE_CLAIM_AGE) for in-flight segment jobs, then treats any
-  # remaining "transcribing" claim as a dead worker: reclaim and retry inline
-  # exactly once before the orchestrator settles the session.
-  MAX_SETTLE_ATTEMPTS = 24
+  # Settlement waits ~2 minutes (matching STALE_CLAIM_AGE) for in-flight segment
+  # jobs, then treats any remaining "transcribing" claim as a dead worker:
+  # reclaim and retry inline exactly once before the orchestrator settles the
+  # session.
+  #
+  # The wait is DELIBERATELY not flat. A client commits the instant the last
+  # segment upload returns, so that segment's ASR (~0.5-2s) is nearly always
+  # still in flight on the first attempt — and a flat 5s tick charged every
+  # single commit a full tick of dead time before anything else could happen.
+  # The first FAST_SETTLE_ATTEMPTS therefore retry on a 1s tick (the floor is
+  # the dispatcher's own polling_interval, config/queue.yml), and only a
+  # genuinely slow settlement backs off to the coarse tick. Attempt counts are
+  # sized so the TOTAL budget still covers STALE_CLAIM_AGE:
+  #   5 x 1s + 23 x 5s = 120s.
+  FAST_SETTLE_ATTEMPTS = 5
+  FAST_SETTLE_WAIT = 1.second
+  MAX_SETTLE_ATTEMPTS = 28
   SETTLE_WAIT = 5.seconds
   STALE_CLAIM_AGE = 2.minutes
+
+  # Backoff for the next settle retry: short while the racing segment is
+  # plausibly still mid-call, coarse once waiting is clearly not paying off.
+  def self.settle_wait_for(attempt)
+    attempt < FAST_SETTLE_ATTEMPTS ? FAST_SETTLE_WAIT : SETTLE_WAIT
+  end
 
   def perform(scribe_session_id, settle_attempt = 0)
     session = ScribeSession.find_by(id: scribe_session_id)
@@ -76,7 +94,7 @@ class ProcessScribeSessionJob < ApplicationJob
 
     if segments.where(status: "transcribing").exists?
       if attempt < MAX_SETTLE_ATTEMPTS
-        self.class.set(wait: SETTLE_WAIT).perform_later(session.id, attempt + 1)
+        self.class.set(wait: self.class.settle_wait_for(attempt)).perform_later(session.id, attempt + 1)
         return :waiting
       end
 
