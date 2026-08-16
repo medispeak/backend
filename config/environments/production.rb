@@ -46,8 +46,24 @@ Rails.application.configure do
   # Don't log any deprecations.
   config.active_support.report_deprecations = false
 
-  # Replace the default in-process memory cache store with a durable alternative.
-  config.cache_store = :solid_cache_store
+  # Rate-limit counters are the ONLY thing in this app that uses Rails.cache
+  # (config/initializers/rack_attack.rb sets `self.cache.store = Rails.cache`;
+  # nothing else calls Rails.cache). Backing them with Solid Cache made every
+  # single API request perform a synchronous Postgres write transaction —
+  # SELECT ... FOR UPDATE plus an upsert on a separate `cache` database — and
+  # hold one more pooled connection per busy thread, on a managed instance whose
+  # ceiling is 25 connections in total.
+  #
+  # Counters are cheap, short-lived and self-healing, and the web tier is a
+  # SINGLE Puma process (WEB_CONCURRENCY unset, instance_count 1), so in-process
+  # counters are exact and the durability of Solid Cache buys nothing.
+  #
+  # IF THE WEB TIER IS EVER SCALED to N processes or instances, counters become
+  # per-process and the effective per-account cap loosens to N x rpm. At that
+  # point either divide the budget, or move back to a shared store by restoring
+  # `config.cache_store = :solid_cache_store` (Solid Cache and its database stay
+  # configured, so that is the only line to change back).
+  config.cache_store = :memory_store, { size: 64.megabytes }
 
   # Replace the default in-process and non-durable queuing backend for Active Job.
   config.active_job.queue_adapter = :solid_queue

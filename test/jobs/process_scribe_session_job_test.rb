@@ -149,6 +149,55 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
     ActiveJob::Base.queue_adapter = old_adapter
   end
 
+  # The commit almost always races the last segment's ASR (the client commits
+  # the instant the final segment upload returns), so the FIRST settle waits
+  # decide the user-visible "stop -> note" time. A flat 5s tick charged every
+  # commit ~5-6s for a segment that finishes in ~1s; the early attempts are
+  # therefore short and only long-running settlements fall back to the coarse
+  # tick. The total budget is unchanged (still ~STALE_CLAIM_AGE).
+  test "re-enqueues the first settle attempts with the short wait" do
+    old_adapter = ActiveJob::Base.queue_adapter
+    ActiveJob::Base.queue_adapter = :test
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "transcribing")
+
+    ProcessScribeSessionJob.perform_now(session.id)
+
+    scheduled_at = enqueued_jobs.last["at"] || enqueued_jobs.last[:at]
+    assert_in_delta Time.current.to_f + ProcessScribeSessionJob::FAST_SETTLE_WAIT.to_f,
+                    scheduled_at.to_f, 1.0,
+                    "the first settle retry must use the short wait, not the 5s tick"
+  ensure
+    ActiveJob::Base.queue_adapter = old_adapter
+  end
+
+  test "falls back to the long settle wait once the fast attempts are exhausted" do
+    old_adapter = ActiveJob::Base.queue_adapter
+    ActiveJob::Base.queue_adapter = :test
+
+    session = create(:scribe_session, account: create(:account), language: "en")
+    add_segment(session, seq: 0, status: "transcribing")
+
+    ProcessScribeSessionJob.perform_now(session.id, ProcessScribeSessionJob::FAST_SETTLE_ATTEMPTS)
+
+    scheduled_at = enqueued_jobs.last["at"] || enqueued_jobs.last[:at]
+    assert_in_delta Time.current.to_f + ProcessScribeSessionJob::SETTLE_WAIT.to_f,
+                    scheduled_at.to_f, 1.0,
+                    "a long-running settlement must back off to the coarse tick"
+  ensure
+    ActiveJob::Base.queue_adapter = old_adapter
+  end
+
+  test "the total settle budget still covers a stale claim" do
+    total = (0...ProcessScribeSessionJob::MAX_SETTLE_ATTEMPTS).sum do |attempt|
+      ProcessScribeSessionJob.settle_wait_for(attempt).to_f
+    end
+
+    assert_operator total, :>=, ProcessScribeSessionJob::STALE_CLAIM_AGE.to_f,
+                    "shortening the early waits must not shrink the window a dead worker's claim needs"
+  end
+
   test "reclaims a stale transcribing claim at the attempt bound and finishes inline" do
     stub_asr(text: "reclaimed and transcribed")
 
