@@ -73,4 +73,78 @@ class PlaygroundTest < ApplicationSystemTestCase
     # `script_src :self` would have blocked.
     assert page.evaluate_script("typeof window.vad !== 'undefined'")
   end
+
+  # The first production run recorded for thirty seconds, uploaded nothing, and
+  # died at commit with "No audio uploaded for this session" — a silent failure
+  # with no signal to the user until the very end.
+  #
+  # This asserts audio genuinely reaches the VAD. NOTE the probe is injected by
+  # wrapping MicVAD.new: `vad.setOptions` looks like it would work and does not.
+  # It writes to frameProcessor.options, while the callback actually invoked is
+  # the one captured in AudioNodeVAD.options at construction
+  # (real-time-vad.js:181 vs :206). Probing via setOptions reports zero frames
+  # on a perfectly healthy recorder — it cost a wrong diagnosis once already.
+  test "audio actually reaches the VAD once recording starts" do
+    visit template_playground_path(@template)
+
+    page.execute_script(<<~JS)
+      window.__probeReady = false
+      window.__frames = { count: 0, peak: 0 }
+      const controller = window.Stimulus.getControllerForElementAndIdentifier(
+        document.querySelector('[data-controller="playground"]'), 'playground')
+      controller.loadVad().then(() => {
+        const original = window.vad.MicVAD.new.bind(window.vad.MicVAD)
+        window.vad.MicVAD.new = (options) => original({ ...options,
+          onFrameProcessed: (_probabilities, frame) => {
+            window.__frames.count++
+            for (let i = 0; i < frame.length; i++) {
+              const amplitude = Math.abs(frame[i])
+              if (amplitude > window.__frames.peak) window.__frames.peak = amplitude
+            }
+          }
+        })
+        window.__probeReady = true
+      })
+    JS
+
+    30.times { break if page.evaluate_script("window.__probeReady"); sleep 1 }
+    assert page.evaluate_script("window.__probeReady"), "the VAD bundle never loaded"
+
+    find("button[aria-label='Start recording']").click
+    assert_selector "button[aria-label='Stop recording']", wait: 30
+
+    # Chrome's --use-fake-device-for-media-capture feeds a tone: not speech (so
+    # onSpeechEnd stays quiet) but very much signal.
+    frames = nil
+    5.times do
+      frames = JSON.parse(page.evaluate_script("JSON.stringify(window.__frames)"))
+      break if frames["count"].to_i.positive? && frames["peak"].to_f.positive?
+
+      sleep 1
+    end
+
+    assert_operator frames["count"].to_i, :>, 0,
+                    "the VAD processed no audio frames at all — it is being fed a dead stream"
+    assert_operator frames["peak"].to_f, :>, 0.0,
+                    "frames reached the VAD but were pure silence (peak amplitude 0)"
+  end
+
+  # The silent-failure fix: recording with nothing detected must say so while it
+  # is happening, and must not spend a commit to be told "No audio uploaded".
+  test "says so when nothing is being heard, instead of failing at commit" do
+    visit template_playground_path(@template)
+    find("button[aria-label='Start recording']").click
+    assert_selector "button[aria-label='Stop recording']", wait: 30
+
+    # A tone is not speech, so this recording captures no phrases — exactly the
+    # shape of a muted microphone.
+    assert_text "Nothing heard yet", wait: 15
+
+    find("button[aria-label='Stop recording']").click
+
+    assert_text "No speech was detected", wait: 15
+    # Retry re-commits, which is useless with nothing to commit; the record
+    # button itself is the way back.
+    assert_no_selector "[data-playground-target='retry']:not(.hidden)"
+  end
 end

@@ -27,6 +27,11 @@ const POLL_MS_PROCESSING = 750
 const POLL_MAX_MS = 5 * 60 * 1000
 
 const FIELD_FILL_DELAY_MS = 500
+
+// How long to record hearing nothing before saying so. Long enough to cover a
+// slow start, short enough that a muted microphone is caught in seconds rather
+// than discovered at commit.
+const SILENCE_HINT_MS = 8000
 const TERMINAL_STATUSES = new Set(["completed", "partial", "failed"])
 
 export default class extends Controller {
@@ -166,6 +171,20 @@ export default class extends Controller {
       // Segments already in flight must land before commit, or the session
       // finalizes against an incomplete transcript.
       await this.drainUploads()
+
+      // Nothing was ever detected as speech, so there is nothing to commit.
+      // Committing anyway spends a round-trip to be told "No audio uploaded for
+      // this session", which reads like a server fault when it is almost always
+      // a silent microphone. Say the useful thing instead.
+      if (this.seq === 0) {
+        this.fail(
+          "No speech was detected, so there was nothing to transcribe. Check that the right " +
+          "microphone is selected and unmuted — then press record and speak normally.",
+          { retryable: false }
+        )
+        return
+      }
+
       await this.apiFetch(`/scribe_sessions/${this.session}/commit`, { method: "POST" })
       this.startPolling(POLL_MS_PROCESSING)
     } catch (err) {
@@ -189,6 +208,7 @@ export default class extends Controller {
       )
 
       this.inflight++
+      this.renderCaptureCount()
       try {
         await this.apiFetch(`/scribe_sessions/${this.session}/audio/segments`, { method: "POST", body })
       } catch (err) {
@@ -494,6 +514,9 @@ export default class extends Controller {
 
     this.statusLabelTarget.textContent = copy[0]
     this.statusHintTarget.textContent = copy[1]
+    // Reset: renderCaptureCount may have left the hint in its amber
+    // nothing-heard-yet styling.
+    this.statusHintTarget.className = "mt-0.5 text-sm text-gray-500"
 
     const recording = state === "recording" || state === "paused"
     this.recordTarget.className = `pg-orb pg-orb-${state === "processing" ? "busy" : recording ? "recording" : "idle"}`
@@ -523,7 +546,30 @@ export default class extends Controller {
       if (this.state === "paused") return
       const elapsed = Math.floor((Date.now() - this.startedAt - this.pausedMs) / 1000)
       this.timerTarget.textContent = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`
+      this.renderCaptureCount()
     }, 250)
+  }
+
+  // Speech detection is the one part of this the user cannot see. Left unsaid, a
+  // muted or wrong-input microphone looks exactly like a working recording right
+  // up until commit rejects the session — which is how the first production run
+  // failed. Report what has actually been captured, as it happens.
+  renderCaptureCount() {
+    if (this.state !== "recording" && this.state !== "paused") return
+
+    if (this.seq > 0) {
+      this.statusHintTarget.textContent =
+        `${this.seq} ${this.seq === 1 ? "phrase" : "phrases"} captured. Keep going — pauses are fine.`
+      this.statusHintTarget.className = "mt-0.5 text-sm text-gray-500"
+      return
+    }
+
+    const elapsed = Date.now() - this.startedAt - this.pausedMs
+    if (elapsed < SILENCE_HINT_MS) return
+
+    this.statusHintTarget.textContent =
+      "Nothing heard yet — check the right microphone is selected and unmuted."
+    this.statusHintTarget.className = "mt-0.5 text-sm font-medium text-amber-700"
   }
 
   stopTimer() {
