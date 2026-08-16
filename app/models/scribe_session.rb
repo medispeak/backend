@@ -2,6 +2,10 @@ require "resolv"
 require "ipaddr"
 
 class ScribeSession < ApplicationRecord
+  # Which of this session's stored audio can actually be played back, and in
+  # what order. See the concern for why that is not simply "the attachments".
+  include AudioPlayback
+
   # Ranges a webhook must never target: loopback, RFC-1918 private, link-local
   # (incl. 169.254.169.254 cloud metadata), unspecified, and IPv6 equivalents.
   BLOCKED_IP_RANGES = [
