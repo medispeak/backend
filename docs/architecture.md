@@ -108,7 +108,9 @@ POST /:id/documents  (one call per file, in page order)
   │  content-type allowlist + 10 MB per file
   │  count_pages: walk the PDF /Pages tree — NOT its self-declared /Count —
   │               inside a 2s Timeout, because both the xref subsection length
-  │               and the tree are attacker-controlled
+  │               and the tree are attacker-controlled; every FlateDecode
+  │               inflate is capped (initializer), because a 4 KB stream can
+  │               decode to gigabytes long before any timeout fires
   │  session.with_lock { re-check 20 MB / 20 pages, attach, increment }
   ▼
 POST /:id/commit → hold sized from pages → ProcessScribeSessionJob

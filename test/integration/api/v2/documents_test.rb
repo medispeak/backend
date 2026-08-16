@@ -284,6 +284,24 @@ module Api
         assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
       end
 
+      # The wall-clock bound does not bound allocation: PDF::Reader.new inflates
+      # a compressed xref stream in its constructor with no output cap, and a
+      # 4 KB nested-FlateDecode stream decodes to gigabytes in well under the
+      # 2 s timeout — the process was OOM-killed before the timer fired. The
+      # inflate is capped (config/initializers/pdf_reader_inflate_cap.rb), so
+      # this must be a quick 422 that never allocated more than the cap.
+      test "a PDF whose xref stream is a decompression bomb is a 422 without inflating it" do
+        session_id = create_document_session
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: flate_bomb_pdf_upload }, headers: @headers
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+        assert_response :unprocessable_entity
+        assert_equal "validation_error", JSON.parse(response.body).dig("error", "code")
+        assert_operator elapsed, :<, 5, "the bomb was inflated rather than refused"
+      end
+
       test "the page cap is enforced across separate uploads, not just per file" do
         # Derived from the cap so this keeps testing the boundary if it moves:
         # each file is under the cap on its own, and together they are over it.
@@ -596,6 +614,34 @@ module Api
         file.binmode
         file.write(header + body + xref + trailer)
         file.rewind
+        Rack::Test::UploadedFile.new(file.path, "application/pdf")
+      end
+
+      # A PDF 1.5 file whose cross-reference table is a compressed `/Type /XRef`
+      # stream — which PDF::Reader.new decodes eagerly, before anything is
+      # asked of it — and whose stream data is a nested FlateDecode bomb: zeros
+      # deflated twice, so a few hundred bytes on disk decode to ~64 MB per
+      # layer. Everything else in the file is a valid one-page document.
+      def flate_bomb_pdf_upload
+        header = "%PDF-1.5\n"
+        objects = [
+          "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+          "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+          "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+        ]
+        body = objects.join
+        payload = Zlib::Deflate.deflate(Zlib::Deflate.deflate("\0" * 64.megabytes))
+        xref_offset = header.bytesize + body.bytesize
+        xref_stream = "4 0 obj\n<< /Type /XRef /Size 5 /W [1 4 2] /Root 1 0 R " \
+                      "/Filter [/FlateDecode /FlateDecode] /Length #{payload.bytesize} >>\n" \
+                      "stream\n#{payload}\nendstream\nendobj\n"
+        trailer = "startxref\n#{xref_offset}\n%%EOF\n"
+
+        file = Tempfile.new([ "bomb", ".pdf" ])
+        file.binmode
+        file.write(header + body + xref_stream + trailer)
+        file.rewind
+        assert_operator file.size, :<, 100.kilobytes, "the bomb is meant to be tiny on disk"
         Rack::Test::UploadedFile.new(file.path, "application/pdf")
       end
 

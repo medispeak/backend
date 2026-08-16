@@ -589,6 +589,15 @@ module Api
       #    tree, and its length is what the provider will actually process.
       #    Walking is itself attacker-directed work, which is precisely why it
       #    runs inside the timeout.
+      #
+      # 3. Unbounded MEMORY, which the timeout does not touch. Every compressed
+      #    stream pdf-reader reads — the xref stream in PDF::Reader.new, the
+      #    object streams the tree walk visits — is inflated with no output cap,
+      #    and a few-hundred-byte nested FlateDecode stream decodes to
+      #    gigabytes in milliseconds: the process is OOM-killed long before the
+      #    2s timer fires, and no rescue catches a kernel kill. That bound lives
+      #    in config/initializers/pdf_reader_inflate_cap.rb, which caps each
+      #    inflate and raises MalformedPDFError (a StandardError) instead.
       PDF_PARSE_TIMEOUT_SECONDS = 2
 
       def count_pages(upload, content_type)
