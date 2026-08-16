@@ -3,8 +3,11 @@
 <%= render "shared/page_header", title: @template.name, subtitle: @template.description do %>
   <%= link_to "All templates", templates_path, class: "btn btn-white" %>
   <% if policy(@template).update? %>
-    <%= link_to "Edit template", edit_template_path(@template), class: "btn btn-primary" %>
+    <%= link_to "Edit template", edit_template_path(@template), class: "btn btn-white" %>
   <% end %>
+  <%# Trying the template is the primary action here: authoring one is only
+      worth anything once you have heard what it extracts. %>
+  <%= link_to "Try it", template_playground_path(@template), class: "btn btn-primary" %>
   <% if policy(@template).destroy? %>
     <%= button_to "Delete template", template_path(@template),
           method: :delete,

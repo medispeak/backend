@@ -13,7 +13,12 @@ Rails.application.configure do
     policy.font_src    :self, :data
     policy.img_src     :self, :data, :https
     policy.object_src  :none
-    policy.script_src  :self
+    # :wasm_unsafe_eval is required by the template playground: the vendored
+    # Silero VAD runs through onnxruntime-web, and WebAssembly.instantiate is
+    # blocked under a bare `script_src :self`. It permits compiling WebAssembly
+    # and nothing else — substantially narrower than :unsafe_eval, which would
+    # also re-open eval() and the Function constructor.
+    policy.script_src  :self, :wasm_unsafe_eval
     policy.style_src   :self
     policy.connect_src :self
     policy.base_uri    :self

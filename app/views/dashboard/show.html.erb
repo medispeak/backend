@@ -93,14 +93,15 @@
     </div>
   <% else %>
     <%#
-      Sessions are created through the API, never in this UI, so the next
-      action on an empty Overview is an API key — not a "new consultation"
-      button that cannot exist.
+      Real consultations arrive through the API. The template playground is the
+      one exception — it runs the same pipeline from the browser, and its runs
+      land in this list like any other. It is the better first action here:
+      hearing a template extract something beats holding an unused API key.
     %>
     <%= render "shared/empty_state",
           title: "No consultations yet",
-          body: "Consultations appear here as soon as your application posts audio or a document to the API.",
-          cta: link_to("Create an API key", new_api_token_path, class: "btn btn-primary btn-small") %>
+          body: "Consultations appear here as soon as your application posts audio or a document to the API — or as soon as you try one of your templates.",
+          cta: link_to("Try a template", templates_path, class: "btn btn-primary btn-small") %>
   <% end %>
 </div>
 

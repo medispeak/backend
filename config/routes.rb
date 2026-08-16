@@ -35,7 +35,18 @@ Rails.application.routes.draw do
 
   # Pages and form fields are authored inside the template builder (nested
   # attributes), so they have no standalone CRUD surface of their own.
-  resources :templates
+  resources :templates do
+    # The playground: run a real scribe session against this template from the
+    # browser. Only the two operations the v2 API restricts to an account token
+    # (create a session, mint a scoped one) live here — the browser does its
+    # audio upload, commit and polling directly against /api/v2 with the short
+    # -lived `mss_` token these hand back, so the playground exercises the same
+    # public API a customer integrates against rather than a private shortcut.
+    get  "playground",                            to: "playground#show",           as: :playground
+    post "playground/sessions",                   to: "playground#create_session", as: :playground_sessions
+    post "playground/sessions/:session_id/token", to: "playground#mint_token",     as: :playground_session_token
+    get  "playground/result",                     to: "playground#result",         as: :playground_result
+  end
 
   resource :usage, only: [ :show ], controller: "usage"
 

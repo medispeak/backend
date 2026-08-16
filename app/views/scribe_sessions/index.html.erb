@@ -79,8 +79,9 @@
 <% else %>
   <div class="card">
     <%#
-      Sessions arrive through the API and cannot be created in this UI, so the
-      next action depends on whether anything is being filtered out.
+      Sessions arrive through the API, or from the template playground, which
+      runs the same pipeline from the browser. The next action depends on
+      whether anything is being filtered out.
     %>
     <% if status_filter || modality_filter %>
       <%= render "shared/empty_state",
