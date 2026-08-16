@@ -1,0 +1,32 @@
+{
+  "id": "en_pediatric_visit",
+  "title": "English: pediatric visit with cough and fever",
+  "language": "en",
+  "system_prompt": null,
+  "transcript": "Hi, so this is Aarav, right? Yes doctor, he's four years old. And what's happening with him? He's had a cough and a runny nose for about five days, and yesterday he started getting fever, it was 100.8 last night. Is he eating? Less than usual, but he's drinking fine. Any vomiting or loose motion? No, none. Okay, let me have a look. Weight is 15.5 kilos. Temperature right now is 99.6. Throat is a bit red, ears are fine, chest is clear, no wheeze. Any allergies to medicines? No, none that we know of. Okay, this looks like a viral upper respiratory infection. Give paracetamol syrup, 7.5 ml, when the fever is above 100, up to four times a day. No antibiotics needed right now. If the fever goes beyond 102, or if he starts breathing fast, bring him back immediately. Otherwise come and see me after three days. Thank you doctor.",
+  "fields": [
+    { "key": "chief_complaint", "label": "Chief complaint", "description": "The main presenting problem", "type": "string" },
+    { "key": "patient_age_years", "label": "Age", "description": "Patient age in completed years", "type": "number", "minimum": 0, "maximum": 18 },
+    { "key": "weight_kg", "label": "Weight", "description": "Body weight in kilograms", "type": "number", "minimum": 1, "maximum": 100 },
+    { "key": "temperature_f", "label": "Temperature", "description": "Temperature recorded at this visit in degrees Fahrenheit", "type": "number", "minimum": 95, "maximum": 108 },
+    { "key": "symptoms", "label": "Symptoms", "description": "All symptoms the child currently has", "type": "multi_select", "enum": ["Fever", "Cough", "Runny nose", "Vomiting", "Loose stools", "Ear pain", "Rash"] },
+    { "key": "diagnosis", "label": "Diagnosis", "type": "single_select", "enum": ["Viral upper respiratory infection", "Bacterial tonsillitis", "Bronchiolitis", "Pneumonia", "Otitis media"] },
+    { "key": "antibiotics_prescribed", "label": "Antibiotics prescribed", "description": "Whether an antibiotic was prescribed at this visit", "type": "boolean" },
+    { "key": "paracetamol_dose_ml", "label": "Paracetamol syrup dose", "description": "Paracetamol syrup dose per administration in ml", "type": "number", "minimum": 0, "maximum": 30 },
+    { "key": "spo2", "label": "SpO2", "description": "Oxygen saturation in percent", "type": "number", "minimum": 50, "maximum": 100 }
+  ],
+  "expected": {
+    "chief_complaint": "cough and runny nose for five days with fever since yesterday",
+    "patient_age_years": 4,
+    "weight_kg": 15.5,
+    "temperature_f": 99.6,
+    "symptoms": ["Fever", "Cough", "Runny nose"],
+    "diagnosis": "Viral upper respiratory infection",
+    "antibiotics_prescribed": false,
+    "paracetamol_dose_ml": 7.5,
+    "spo2": null
+  },
+  "scoring": {
+    "chief_complaint": "contains:cough"
+  }
+}

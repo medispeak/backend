@@ -1,0 +1,24 @@
+{
+  "id": "hi_bp_checkup",
+  "title": "Hindi: hypertension follow-up",
+  "language": "hi",
+  "code_mix": true,
+  "turns": [
+    {
+      "speaker": "doctor",
+      "text": "नमस्ते शर्मा जी, दवा ठीक से ले रहे हैं?"
+    },
+    {
+      "speaker": "patient",
+      "text": "जी डॉक्टर साहब, हर सुबह amlodipine 5 मिलीग्राम लेता हूँ, पर कभी-कभी सिर भारी लगता है।"
+    },
+    {
+      "speaker": "doctor",
+      "text": "आज आपका बीपी 150 बटा 95 है, थोड़ा बढ़ा हुआ है। घर पर नाप रहे हैं?"
+    },
+    {
+      "speaker": "patient",
+      "text": "हाँ, घर पर भी 145 बटा 90 के आसपास रहता है।"
+    }
+  ]
+}

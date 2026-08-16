@@ -42,3 +42,6 @@ skills-lock.json
 
 # macOS Finder metadata
 .DS_Store
+
+# Model benchmark run outputs (bench/audio fixtures ARE committed)
+/bench/results/

@@ -1,0 +1,24 @@
+{
+  "id": "mix_manglish_backpain",
+  "title": "Manglish: lower back pain after lifting",
+  "language": "ml",
+  "code_mix": true,
+  "turns": [
+    {
+      "speaker": "doctor",
+      "text": "എന്താണ് പ്രശ്നം? ഇരിക്കൂ, പറയൂ."
+    },
+    {
+      "speaker": "patient",
+      "text": "കഴിഞ്ഞ ആഴ്ച ഒരു heavy bag പൊക്കിയപ്പോൾ back pain തുടങ്ങി ഡോക്ടർ. ഇപ്പോൾ അഞ്ച് ദിവസമായി."
+    },
+    {
+      "speaker": "doctor",
+      "text": "വേദന കാലിലേക്ക് ഇറങ്ങുന്നുണ്ടോ? numbness ഉണ്ടോ?"
+    },
+    {
+      "speaker": "patient",
+      "text": "ഇല്ല ഡോക്ടർ, numbness ഇല്ല. കുനിയുമ്പോൾ മാത്രം വേദന കൂടും."
+    }
+  ]
+}
