@@ -1,9 +1,17 @@
 # Consultations are account data. A user sees their own account's sessions;
-# an admin sees everything. Sessions are produced by the API, never edited
-# through the UI, so this is read-only.
+# an admin sees everything. Sessions are produced by the API and by the
+# template playground, and are never edited through the UI — so beyond
+# create?, this stays read-only.
 class ScribeSessionPolicy < ApplicationPolicy
   def index?
     user.present?
+  end
+
+  # The playground is the one UI surface that starts a session. It needs an
+  # account to bill and scope against, which rules out an admin with no account
+  # of their own — unlike show?, admin is not a bypass here.
+  def create?
+    user.present? && user.account_id.present?
   end
 
   def show?

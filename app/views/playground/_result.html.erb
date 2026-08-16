@@ -1,0 +1,57 @@
+<%#
+  The finished run, rendered server-side and swapped in over the live field
+  rows. Outputs go through the same partial the consultation page uses, so a
+  playground result and a real consultation can never read differently.
+
+  Usage is shown deliberately: the person evaluating whether this product is
+  worth paying for is the person who just pressed record.
+%>
+<% total_cost = session.usage_events.sum { |event| event.cost.to_f } %>
+<% audio_seconds = session.usage_events.sum { |event| event.audio_seconds.to_f } %>
+<% total_tokens = session.usage_events.sum { |event| event.total_tokens.to_i } %>
+<% filled = outputs.sum { |output| output.result.is_a?(Hash) ? output.result.count { |_, v| v.present? || v == false } : 0 } %>
+
+<section class="card card-pad">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <%= status_badge(session.status, kind: :session) %>
+      <p class="text-base font-semibold text-gray-900">
+        <span class="num"><%= filled %></span>
+        <%= "field".pluralize(filled) %> filled
+      </p>
+    </div>
+    <%= link_to "View as consultation", scribe_session_path(session), class: "btn btn-white btn-small" %>
+  </div>
+
+  <dl class="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div>
+      <dt class="stat-label">Cost</dt>
+      <dd class="stat-value"><%= format_cost(total_cost, precision: 6) %></dd>
+    </div>
+    <div>
+      <dt class="stat-label">Audio</dt>
+      <dd class="stat-value"><%= audio_seconds.positive? ? format_duration(audio_seconds) : "—" %></dd>
+    </div>
+    <div>
+      <dt class="stat-label">Tokens</dt>
+      <dd class="stat-value"><%= format_tokens(total_tokens) %></dd>
+    </div>
+    <div>
+      <dt class="stat-label">Outputs</dt>
+      <dd class="stat-value"><%= outputs.size %></dd>
+    </div>
+  </dl>
+</section>
+
+<% if session.error.present? %>
+  <%# A failed run's reason lives on the session, not only on its outputs — a
+      segment that never settled is reported here and nowhere else. %>
+  <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+    <p class="text-xs font-semibold uppercase tracking-wider text-rose-700">Run failed</p>
+    <p class="mt-1 text-sm text-rose-800">
+      <%= session.error.is_a?(Hash) ? (session.error["message"] || session.error.to_json) : session.error %>
+    </p>
+  </div>
+<% end %>
+
+<%= render partial: "scribe_sessions/output", collection: outputs, as: :output %>

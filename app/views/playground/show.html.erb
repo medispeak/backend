@@ -1,0 +1,136 @@
+<% content_for :title, "Try #{@template.name}" %>
+
+<%= render "shared/page_header",
+      title: "Try #{@template.name}",
+      subtitle: "Record the way your users will. This runs a real session against this template — same models, same latency, same cost." do %>
+  <%= link_to "Back to template", template_path(@template), class: "btn btn-white" %>
+<% end %>
+
+<% if @pages_with_fields.empty? %>
+  <div class="card">
+    <%= render "shared/empty_state",
+          title: "Nothing to fill in yet",
+          body: "The playground runs this template's pages against your voice. Add at least one field first.",
+          cta: (link_to("Edit template", edit_template_path(@template), class: "btn btn-primary") if policy(@template).update?) %>
+  </div>
+<% else %>
+  <%#
+    One Stimulus controller drives the whole page. Every URL and asset path it
+    needs is handed to it as data — the VAD bundle and its wasm/model files are
+    served undigested from public/vad/<version>/ because vad-web appends its own
+    filenames to `baseAssetPath`, which a digested propshaft path would break.
+  %>
+  <div data-controller="playground"
+       data-playground-create-session-url-value="<%= template_playground_sessions_path(@template) %>"
+       data-playground-token-url-template-value="<%= template_playground_session_token_path(@template, session_id: "SESSION_ID") %>"
+       data-playground-result-url-value="<%= template_playground_result_path(@template) %>"
+       data-playground-api-base-value="/api/v2"
+       data-playground-vad-base-value="/vad/0.0.24/"
+       data-playground-ort-base-value="/vad/0.0.24/ort/"
+       class="space-y-6">
+
+    <%# ── Recorder ─────────────────────────────────────────────────────── %>
+    <section class="card card-pad">
+      <div class="flex flex-wrap items-center gap-5">
+        <%#
+          One control for the whole run — idle, recording, working — so the
+          transition between them reads as one continuous thing rather than a
+          screen change. While recording it shows live level bars, and swaps to
+          a stop glyph on hover, so the resting state is pure signal-of-life.
+        %>
+        <button type="button"
+                data-playground-target="record"
+                data-action="playground#toggle"
+                class="pg-orb pg-orb-idle"
+                aria-label="Start recording">
+          <svg class="pg-icon pg-icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/>
+          </svg>
+          <svg class="pg-icon pg-icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="7" y="7" width="10" height="10" rx="2"/>
+          </svg>
+          <span class="pg-arc" aria-hidden="true"></span>
+          <span data-playground-target="bars" class="pg-bars" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i>
+          </span>
+        </button>
+
+        <div class="min-w-0 flex-1">
+          <p data-playground-target="statusLabel" class="text-base font-semibold text-gray-900">
+            Ready when you are
+          </p>
+          <p data-playground-target="statusHint" class="mt-0.5 text-sm text-gray-500">
+            Press record and describe a consultation out loud.
+          </p>
+
+          <div data-playground-target="steps" class="mt-3 hidden flex-wrap items-center gap-2">
+            <span class="badge badge-neutral" data-step="0">Transcribing</span>
+            <span class="badge badge-neutral" data-step="1">Extracting details</span>
+            <span class="badge badge-neutral" data-step="2">Filling form</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <span data-playground-target="timer" class="num hidden text-2xl font-semibold tabular-nums text-gray-900">0:00</span>
+          <button type="button"
+                  data-playground-target="pause"
+                  data-action="playground#togglePause"
+                  class="btn btn-white btn-small hidden">Pause</button>
+        </div>
+      </div>
+
+      <div data-playground-target="error" class="mt-5 hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+        <p class="text-sm text-rose-800" data-playground-target="errorMessage"></p>
+        <button type="button"
+                data-playground-target="retry"
+                data-action="playground#retry"
+                class="btn btn-white btn-small mt-3 hidden">Retry</button>
+      </div>
+    </section>
+
+    <%# ── Transcript ───────────────────────────────────────────────────── %>
+    <section data-playground-target="transcriptCard" class="card hidden">
+      <div class="card-header flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold text-gray-900">Transcript</h2>
+        <span data-playground-target="transcriptBadge" class="badge badge-progress">Listening</span>
+      </div>
+      <div class="card-pad">
+        <p data-playground-target="transcript"
+           class="max-h-40 overflow-y-auto whitespace-pre-wrap text-sm leading-6 text-gray-700"></p>
+      </div>
+    </section>
+
+    <%# ── Fields, waiting to fill ──────────────────────────────────────── %>
+    <div data-playground-target="fields" class="space-y-6">
+      <% @pages_with_fields.each do |page| %>
+        <section class="card">
+          <div class="card-header flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-base font-semibold tracking-tight text-gray-900"><%= page.name %></h2>
+            <span class="text-sm text-gray-500">
+              <span class="num"><%= page.form_fields.size %></span>
+              <%= "field".pluralize(page.form_fields.size) %>
+            </span>
+          </div>
+          <div class="card-pad">
+            <dl class="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+              <% page.form_fields.sort_by(&:id).each do |field| %>
+                <div class="pg-field min-w-0" data-field-key="<%= field.title %>">
+                  <dt class="text-xs font-medium uppercase tracking-wider text-gray-400">
+                    <%= field.friendly_name.presence || field.title %>
+                  </dt>
+                  <dd class="mt-1 break-words text-sm text-gray-900">
+                    <span class="pg-field-value text-gray-300">—</span>
+                  </dd>
+                </div>
+              <% end %>
+            </dl>
+          </div>
+        </section>
+      <% end %>
+    </div>
+
+    <%# Replaced wholesale by the server-rendered result once the run finishes. %>
+    <div data-playground-target="result" class="hidden space-y-6"></div>
+  </div>
+<% end %>

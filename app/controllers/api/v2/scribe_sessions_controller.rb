@@ -3,7 +3,6 @@ require "digest"
 module Api
   module V2
     class ScribeSessionsController < BaseController
-      OUTPUT_TYPES = %w[transcript form note].freeze
       DEFAULT_PAGE_LIMIT = 50
       MAX_PAGE_LIMIT = 100
       # Per-part ceiling for a chunked upload. Deliberately well under the whole-
@@ -21,27 +20,28 @@ module Api
         fingerprint = Digest::SHA256.hexdigest(raw_request_body)
 
         with_idempotency(fingerprint) do
-          outputs = Array(create_params[:outputs])
+          result = Scribe::SessionBuilder.new(
+            account: current_account,
+            api_token: current_api_token,
+            user: current_api_token.user,
+            outputs: create_params[:outputs],
+            mode: create_params[:mode],
+            modality: create_params[:modality],
+            language_hint: create_params[:language_hint],
+            callback_url: create_params[:callback_url],
+            idempotency_key: idempotency_key_header
+          ).call
 
-          error = validate_outputs(outputs)
-          if error
-            render_error(code: "validation_error", message: error, status: :unprocessable_entity)
-            next
-          end
-
-          session = build_session
-          unless session.valid?
+          unless result.success?
             render_error(
-              code: "validation_error",
-              message: session.errors.full_messages.to_sentence,
+              code: result.error[:code],
+              message: result.error[:message],
               status: :unprocessable_entity
             )
             next
           end
-          session.save!
-          build_outputs(session, outputs)
 
-          render json: serialize(session), status: :created
+          render json: serialize(result.session), status: :created
         end
       end
 
@@ -587,80 +587,6 @@ module Api
       # matches ScribeSession::ALLOWED_AUDIO_TYPES.
       def base_audio_type(content_type)
         content_type.to_s.split(";").first.to_s.strip.downcase
-      end
-
-      def build_session
-        ScribeSession.new(
-          account: current_account,
-          api_token: current_api_token,
-          user: current_api_token.user,
-          status: "created",
-          modality: create_params[:modality].presence || "audio",
-          language: create_params[:language_hint],
-          mode: create_params[:mode].presence || "consultation",
-          callback_url: create_params[:callback_url],
-          idempotency_key: idempotency_key_header,
-          expires_at: 24.hours.from_now
-        )
-      end
-
-      def build_outputs(session, outputs)
-        outputs.each do |output|
-          output = output.to_h.with_indifferent_access
-          session.scribe_outputs.create!(
-            status: "pending",
-            output_type: output[:type],
-            page_id: output[:page_id],
-            template_ref: output[:template_ref],
-            context: output[:context].presence || {},
-            inline_fields: output[:fields].present? ? output[:fields].map { |f| f.to_h } : nil
-          )
-        end
-      end
-
-      # Returns an error message string, or nil when all outputs are valid.
-      def validate_outputs(outputs)
-        return "outputs must be a non-empty array" if outputs.blank?
-
-        outputs.each do |output|
-          output = output.to_h.with_indifferent_access
-          type = output[:type]
-
-          unless OUTPUT_TYPES.include?(type)
-            return "Invalid output type: #{type.inspect}"
-          end
-
-          if type == "form"
-            # A form output carries EXACTLY one schema source: a persisted
-            # page_id OR an inline `fields` array. Neither/both is a 422.
-            page_id = output[:page_id]
-            fields = output[:fields]
-            has_page = page_id.present?
-            has_fields = fields.present?
-            return "form output needs exactly one of page_id or fields" if has_page == has_fields
-
-            if has_page
-              # Scope to pages the CALLER may use: its own account's templates or
-              # legacy shared templates (account_id NULL, plan 013). Without this
-              # scope a tenant could name another account's page_id and have the
-              # pipeline read their form schema, prompt, and model assignment.
-              # Same message for foreign vs absent pages so it isn't an existence
-              # oracle.
-              usable = Page.joins(:template)
-                           .where(id: page_id)
-                           .where(templates: { account_id: [ nil, current_account&.id ] })
-                           .exists?
-              unless usable
-                return "page_id #{page_id.inspect} does not reference an existing page"
-              end
-            else
-              err = Scribe::InlineField.validation_error(fields.map { |f| f.to_h })
-              return err if err
-            end
-          end
-        end
-
-        nil
       end
 
       # 200 when terminal (completed/failed), 206 when partial, 202 otherwise.
