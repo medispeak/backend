@@ -63,6 +63,22 @@ class PlaygroundControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-field-key='chief_complaint']", text: /Chief complaint/
   end
 
+  test "show offers both source modes and hands the browser the upload limits" do
+    sign_in @user
+    get template_playground_path(@template)
+
+    assert_response :success
+    assert_select "[data-playground-target='modeAudio']", text: /Record audio/
+    assert_select "[data-playground-target='modeDocument']", text: /Upload a report/
+    assert_select "input[type=file][data-playground-target='fileInput']"
+    # Rendered from the model constants, so a limit change cannot leave the
+    # browser refusing (or accepting) something the server does not.
+    assert_select "[data-playground-max-file-bytes-value=?]",
+                  ScribeSession::MAX_DOCUMENT_FILE_BYTES.to_s
+    assert_select "[data-playground-max-total-bytes-value=?]",
+                  ScribeSession::MAX_DOCUMENT_BYTES.to_s
+  end
+
   test "show offers nothing to run when the template has no fields" do
     sign_in @user
     empty = create(:template, account: @account, name: "Empty")
@@ -101,6 +117,44 @@ class PlaygroundControllerTest < ActionDispatch::IntegrationTest
     assert_equal 2, session.scribe_outputs.count
     assert_equal [ "form", "form" ], session.scribe_outputs.map(&:output_type)
     assert_equal [ @page.id, second.id ].sort, session.scribe_outputs.map(&:page_id).sort
+  end
+
+  test "create_session builds a document session when the browser asks for one" do
+    sign_in @user
+
+    assert_difference "ScribeSession.count", 1 do
+      post template_playground_sessions_path(@template), params: { modality: "document" }, as: :json
+    end
+
+    assert_response :created
+    body = JSON.parse(response.body)
+    assert_equal "document", body["modality"]
+
+    session = ScribeSession.find(body["session_id"])
+    assert_equal "document", session.modality
+    # The outputs are identical to an audio run's: modality decides only how the
+    # transcript comes to exist, never what is produced from it.
+    assert_equal [ "form" ], session.scribe_outputs.map(&:output_type)
+    assert_equal [ @page.id ], session.scribe_outputs.map(&:page_id)
+  end
+
+  test "create_session defaults to audio for a missing or unknown modality" do
+    sign_in @user
+
+    post template_playground_sessions_path(@template), as: :json
+    assert_equal "audio", ScribeSession.find(JSON.parse(response.body)["session_id"]).modality
+
+    post template_playground_sessions_path(@template), params: { modality: "telepathy" }, as: :json
+    assert_response :created
+    assert_equal "audio", ScribeSession.find(JSON.parse(response.body)["session_id"]).modality
+  end
+
+  test "the scoped token a document run uses names the document scope" do
+    sign_in @user
+    post template_playground_sessions_path(@template), params: { modality: "document" }, as: :json
+
+    claims = Scribe::SessionToken.verify(JSON.parse(response.body)["token"])
+    assert_includes claims["scope"], "document"
   end
 
   test "create_session returns a scoped token that verifies for this session" do

@@ -2,7 +2,7 @@
 
 <%= render "shared/page_header",
       title: "Try #{@template.name}",
-      subtitle: "Record the way your users will. This runs a real session against this template — same models, same latency, same cost." do %>
+      subtitle: "Record the way your users will, or upload a lab report. This runs a real session against this template — same models, same latency, same cost." do %>
   <%= link_to "Back to template", template_path(@template), class: "btn btn-white" %>
 <% end %>
 
@@ -27,9 +27,36 @@
        data-playground-api-base-value="/api/v2"
        data-playground-vad-base-value="/vad/0.0.24/"
        data-playground-ort-base-value="/vad/0.0.24/ort/"
+       <%#
+         Rendered from the model constants so the browser can refuse a file the
+         server would refuse anyway — locally, before spending the upload. A
+         courtesy, not the boundary: #documents re-checks every one of these
+         under a row lock, and counts pages, which the browser cannot.
+       %>
+       data-playground-max-file-bytes-value="<%= ScribeSession::MAX_DOCUMENT_FILE_BYTES %>"
+       data-playground-max-total-bytes-value="<%= ScribeSession::MAX_DOCUMENT_BYTES %>"
+       data-playground-document-types-value="<%= ScribeSession::ALLOWED_DOCUMENT_TYPES.to_json %>"
        class="space-y-6">
 
-    <%# ── Recorder ─────────────────────────────────────────────────────── %>
+    <%#
+      Two ways in, one pipeline. A recording and an uploaded lab report differ
+      only in how the transcript comes to exist — after that both run the same
+      structuring, metering and polling — so the two live in ONE card behind a
+      mode switch rather than on separate screens. The status line, step badges
+      and error panel below are shared by both for the same reason.
+    %>
+    <div class="pg-modes" role="tablist" aria-label="Source">
+      <button type="button" role="tab" aria-selected="true"
+              data-playground-target="modeAudio"
+              data-action="playground#useAudio"
+              class="pg-mode pg-mode-on">Record audio</button>
+      <button type="button" role="tab" aria-selected="false"
+              data-playground-target="modeDocument"
+              data-action="playground#useDocument"
+              class="pg-mode">Upload a report</button>
+    </div>
+
+    <%# ── Source: record, or upload ────────────────────────────────────── %>
     <section class="card card-pad">
       <div class="flex flex-wrap items-center gap-5">
         <%#
@@ -56,6 +83,19 @@
           </span>
         </button>
 
+        <%# The document twin of the orb: same 64px footprint, same slot. %>
+        <button type="button"
+                data-playground-target="pick"
+                data-action="playground#chooseFiles"
+                class="pg-orb pg-orb-idle hidden"
+                aria-label="Choose a document">
+          <svg class="pg-icon pg-icon-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/>
+            <path d="M14 2v5h5M9 13h6M9 17h4"/>
+          </svg>
+          <span class="pg-arc" aria-hidden="true"></span>
+        </button>
+
         <div class="min-w-0 flex-1">
           <p data-playground-target="statusLabel" class="text-base font-semibold text-gray-900">
             Ready when you are
@@ -65,20 +105,40 @@
           </p>
 
           <div data-playground-target="steps" class="mt-3 hidden flex-wrap items-center gap-2">
-            <span class="badge badge-neutral" data-step="0">Transcribing</span>
+            <span class="badge badge-neutral" data-step="0" data-playground-target="stepZero">Transcribing</span>
             <span class="badge badge-neutral" data-step="1">Extracting details</span>
             <span class="badge badge-neutral" data-step="2">Filling form</span>
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div data-playground-target="audioControls" class="flex items-center gap-3">
           <span data-playground-target="timer" class="num hidden text-2xl font-semibold tabular-nums text-gray-900">0:00</span>
           <button type="button"
                   data-playground-target="pause"
                   data-action="playground#togglePause"
                   class="btn btn-white btn-small hidden">Pause</button>
         </div>
+
+        <div data-playground-target="documentControls" class="hidden items-center gap-3">
+          <%#
+            accept is a courtesy filter in the file dialog; ALLOWED_DOCUMENT_TYPES
+            on the server is the actual gate. `multiple` because a report is
+            routinely a page per photo — they upload in order and are OCR'd as
+            one document.
+          %>
+          <input type="file" class="sr-only"
+                 data-playground-target="fileInput"
+                 data-action="playground#filesChosen"
+                 accept="application/pdf,image/jpeg,image/png,image/webp"
+                 multiple>
+          <button type="button"
+                  data-playground-target="extract"
+                  data-action="playground#extract"
+                  class="btn btn-primary" disabled>Extract</button>
+        </div>
       </div>
+
+      <ul data-playground-target="fileList" class="mt-5 hidden space-y-2"></ul>
 
       <div data-playground-target="error" class="mt-5 hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
         <p class="text-sm text-rose-800" data-playground-target="errorMessage"></p>
@@ -89,10 +149,10 @@
       </div>
     </section>
 
-    <%# ── Transcript ───────────────────────────────────────────────────── %>
+    <%# ── Transcript / extracted text ──────────────────────────────────── %>
     <section data-playground-target="transcriptCard" class="card hidden">
       <div class="card-header flex items-center justify-between gap-2">
-        <h2 class="text-sm font-semibold text-gray-900">Transcript</h2>
+        <h2 data-playground-target="transcriptTitle" class="text-sm font-semibold text-gray-900">Transcript</h2>
         <span data-playground-target="transcriptBadge" class="badge badge-progress">Listening</span>
       </div>
       <div class="card-pad">

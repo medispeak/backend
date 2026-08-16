@@ -9,7 +9,8 @@ class Scribe::SessionTokenTest < ActiveSupport::TestCase
     assert exp <= @session.expires_at
     claims = Scribe::SessionToken.verify(token)
     assert_equal @session.id, claims["sid"]
-    assert_equal %w[audio read], claims["scope"]
+    assert_equal Scribe::SessionToken::SCOPE, claims["scope"]
+    assert_includes claims["scope"], "document"
   end
 
   test "verify rejects tampered, foreign-prefix, and expired tokens" do

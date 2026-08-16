@@ -147,4 +147,76 @@ class PlaygroundTest < ApplicationSystemTestCase
     # button itself is the way back.
     assert_no_selector "[data-playground-target='retry']:not(.hidden)"
   end
+
+  # ── document (OCR) mode ───────────────────────────────────────────────────
+  #
+  # These stop at "the file is chosen and extraction is armed", for the same
+  # reason the recording tests stop at "recording has started": everything past
+  # the upload is a provider round-trip that the integration suite already
+  # covers without a browser. What cannot be covered without one is the mode
+  # switch itself and the client-side file guard.
+
+  test "switching to document mode swaps the recorder for an upload control" do
+    visit template_playground_path(@template)
+    assert_selector "button[aria-label='Start recording']"
+
+    click_on "Upload a report"
+
+    assert_selector "button[aria-label='Choose a document']"
+    assert_no_selector "button[aria-label='Start recording']"
+    assert_text "Choose a lab report"
+    assert_button "Extract", disabled: true
+  end
+
+  test "choosing a report lists it and arms extraction" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+
+    attach_file(nil, pdf_fixture, make_visible: true)
+
+    assert_text "report.pdf"
+    assert_button "Extract", disabled: false
+    assert_text(/1 file ready/i)
+  end
+
+  test "an unsupported file is refused in the browser, before any upload" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+
+    assert_no_difference -> { ScribeSession.count } do
+      attach_file(nil, text_fixture, make_visible: true)
+      assert_text "is not a PDF or an image"
+    end
+    assert_button "Extract", disabled: true
+  end
+
+  test "switching back to audio restores the recorder and forgets the file" do
+    visit template_playground_path(@template)
+    click_on "Upload a report"
+    attach_file(nil, pdf_fixture, make_visible: true)
+    assert_text "report.pdf"
+
+    click_on "Record audio"
+
+    assert_selector "button[aria-label='Start recording']"
+    assert_no_text "report.pdf"
+    assert_text "Press record and describe a consultation out loud"
+  end
+
+  private
+
+  # Written once per example into the test's tmp dir; content is irrelevant
+  # because nothing here uploads it — only the browser-side type and size
+  # checks read the File object.
+  def pdf_fixture
+    path = Rails.root.join("tmp", "report.pdf")
+    File.binwrite(path, "%PDF-1.4\n%%EOF\n")
+    path.to_s
+  end
+
+  def text_fixture
+    path = Rails.root.join("tmp", "notes.txt")
+    File.write(path, "not a lab report")
+    path.to_s
+  end
 end
