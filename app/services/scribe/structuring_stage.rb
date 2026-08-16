@@ -27,13 +27,18 @@ module Scribe
       llm = Llm::Caller.structure(@config, messages: messages(transcript_text), schema: model_schema)
       guard_completion!(llm)
 
+      repair_usage = nil
       data, errors = validator.validate_and_repair(llm.structured) do |errs|
-        repair(transcript_text, model_schema, llm.structured, errs)
+        repaired = repair(transcript_text, model_schema, llm.structured, errs)
+        repair_usage = repaired.usage
+        repaired.structured
       end
 
       Result.new(
         structured: data,
-        usage: llm.usage,
+        # The repair re-ask is a second paid call: its usage is part of this
+        # attempt's cost, so it is summed here (metering reads Result#usage).
+        usage: sum_usage(llm.usage, repair_usage),
         model: llm.model,
         provider: llm.provider,
         finish_reason: llm.finish_reason,
@@ -67,6 +72,7 @@ module Scribe
       raise Llm::BadResponse, "model did not complete (finish_reason=#{llm.finish_reason})"
     end
 
+    # Returns the repair call's full Llm::Result (structured + usage).
     def repair(text, schema, previous, errors)
       repair_messages = messages(text) + [
         { role: "assistant", content: previous.to_json },
@@ -74,7 +80,20 @@ module Scribe
                                  "#{errors.map { |e| e[:message] }.join('; ')}. " \
                                  "Return corrected JSON only." }
       ]
-      Llm::Caller.structure(@config, messages: repair_messages, schema: schema).structured
+      Llm::Caller.structure(@config, messages: repair_messages, schema: schema)
+    end
+
+    def sum_usage(first, second)
+      return first if second.nil?
+      return second if first.nil?
+
+      Llm::Usage.new(
+        input_tokens: first.input_tokens + second.input_tokens,
+        output_tokens: first.output_tokens + second.output_tokens,
+        audio_seconds: first.audio_seconds + second.audio_seconds,
+        pages: first.pages + second.pages,
+        estimated: first.estimated || second.estimated
+      )
     end
 
     def present?(value)

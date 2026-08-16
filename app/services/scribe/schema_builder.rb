@@ -41,12 +41,24 @@ module Scribe
 
     private
 
+    # Every field is optional (`required: []`), and providers say "not in the
+    # transcript" with an explicit null (the OpenAI strict transform makes each
+    # property nullable for exactly that reason). The VALIDATION schema must
+    # therefore accept null too — typed `[t, "null"]`, with null admitted to
+    # enums — otherwise every absent field fails validation, costs a repair
+    # round-trip, and lands the output in :partial. The MODEL schema keeps the
+    # plain type: strict decoders reject unions here and adapters add their
+    # own nullability.
     def field_schema(field, for_validation: false)
-      schema = { type: json_type(field), description: description_for(field) }
+      type = json_type(field)
+      schema = { type: for_validation ? [ type, "null" ] : type, description: description_for(field) }
 
       case field.field_type.to_s
       when "single_select"
-        schema[:enum] = Array(field.enum_options) if present?(field.enum_options)
+        if present?(field.enum_options)
+          schema[:enum] = Array(field.enum_options)
+          schema[:enum] += [ nil ] if for_validation
+        end
       when "multi_select"
         items = { type: "string" }
         items[:enum] = Array(field.enum_options) if present?(field.enum_options)
