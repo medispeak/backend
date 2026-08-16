@@ -43,7 +43,7 @@ The `medispeak_backend` service is the core Rails application. It depends on the
 - **Build Arguments**: The build process takes several arguments, such as `RAILS_ENV`, `BUNDLE_DEPLOYMENT`, and others for bundling gems and preparing the Rails environment.
 - **Environment Variables**:
   - OpenAI credentials (`OPENAI_ACCESS_TOKEN`, `OPENAI_ORGANIZATION_ID`).
-  - AWS credentials for file storage (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc.).
+  - Object storage credentials (`SPACES_ACCESS_KEY_ID`, `SPACES_SECRET_ACCESS_KEY`, etc.; `AWS_*` for the legacy S3 service).
   - PostgreSQL database connection details (`DB_HOST`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`).
   - Plugin-related configuration (`PLUGIN_BASE_URL`).
 - **Ports**: The Rails backend exposes the port defined by `BACKEND_PORT`.
@@ -72,7 +72,14 @@ BUNDLE_PATH="/usr/local/bundle"
 BUNDLE_WITHOUT="development test"
 BACKEND_PORT=3000
 
-# AWS S3 Configuration (required for production)
+# Object storage. Production runs on DigitalOcean Spaces (STORAGE_SERVICE=spaces),
+# co-located with the app in blr1. SPACES_REGION and SPACES_ENDPOINT default to
+# blr1, so only the key, secret and bucket are required.
+SPACES_ACCESS_KEY_ID=your_spaces_access_key
+SPACES_SECRET_ACCESS_KEY=your_spaces_secret_key
+SPACES_BUCKET=your_spaces_bucket_name
+
+# AWS S3 Configuration (legacy; STORAGE_SERVICE=amazon)
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 AWS_REGION=your_aws_region
