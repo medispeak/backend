@@ -52,9 +52,13 @@ module Llm
     # fallback attempt must not 400 on a number that suited the primary.
     #
     # The ceiling comes from the model's capabilities.max_output_tokens when an
-    # admin has recorded it, else the assignment's options.max_output_tokens,
-    # else the adapter's conservative default. A too-low ceiling degrades to an
-    # honest truncation failure (guard_ocr_completion!, then fallback); a
+    # admin has recorded it, else the adapter's conservative default. It is a
+    # MODEL property and is read only from the model row, never from the
+    # assignment's options: ConfigResolver hands the primary assignment's
+    # options to the fallback Config as well, so an options-declared ceiling
+    # would be applied to a different model on the fallback path — exactly the
+    # over-ceiling 400 this clamp exists to prevent. A too-low ceiling degrades
+    # to an honest truncation failure (guard_ocr_completion!, then fallback); a
     # too-high one is a hard 400 — which is why the defaults are conservative.
     def clamp_ocr_budget(max_tokens)
       return nil if max_tokens.nil?
@@ -63,8 +67,8 @@ module Llm
     end
 
     def ocr_output_ceiling
-      declared = config.capabilities[:max_output_tokens] || config.options[:max_output_tokens]
-      declared.to_i.positive? ? declared.to_i : self.class::DEFAULT_OUTPUT_CEILING
+      declared = config.capabilities[:max_output_tokens].to_i
+      declared.positive? ? declared : self.class::DEFAULT_OUTPUT_CEILING
     end
 
     # A truncated extraction arrives as a 200 carrying half a lab report, and

@@ -206,15 +206,17 @@ class OcrStageTest < Minitest::Test
     end
   end
 
-  # The assignment's options can also carry it, for a model row nobody has
-  # annotated yet.
-  def test_an_assignment_option_can_declare_the_ceiling_too
+  # The ceiling is a MODEL property. ConfigResolver hands the primary
+  # assignment's options to the fallback Config too, so an options-declared
+  # ceiling would be applied to a different model on the fallback path; it is
+  # therefore ignored here on purpose.
+  def test_the_ceiling_is_never_read_from_the_assignment_options
     stub_request(:post, CHAT_URL).to_return(openai_body)
     Scribe::OcrStage.new(config: openai_config(options: { max_output_tokens: 32_768 }))
                     .call(documents, pages: 12)
 
     assert_requested(:post, CHAT_URL) do |req|
-      JSON.parse(req.body)["max_completion_tokens"] == 12 * Scribe::OcrStage::TOKENS_PER_PAGE
+      JSON.parse(req.body)["max_completion_tokens"] == Llm::Adapters::OpenaiCompatible::DEFAULT_OUTPUT_CEILING
     end
   end
 
