@@ -34,7 +34,7 @@ module Scribe
 
     def call
       transcript = ensure_transcript!
-      return @session if transcript.nil? && asr_failed?
+      return @session if transcript.nil? && transcript_failed?
 
       # Transcript outputs are a pure echo of the already-persisted transcript
       # (no LLM call), so process them FIRST — the transcript reaches :success in
@@ -90,10 +90,103 @@ module Scribe
       else
         transcript_from_whole_file!
       end
-    rescue Llm::Error => e
-      mark_asr_failure!(e)
-      @asr_failed = true
+    # Llm::Error is the EXPECTED failure, but extraction does more than call a
+    # provider: it downloads blobs (ActiveStorage::FileNotFoundError on a purged
+    # or half-written attachment), base64-encodes them, and writes a Transcript
+    # (ActiveRecord::RecordInvalid). Any of those escaping this rescue left every
+    # ScribeOutput sitting at :pending, skipped the webhook, and returned a
+    # :failed session whose `error` was empty — a silent wedge with no client
+    # signal. Everything that can stop a transcript existing is therefore handled
+    # the same way, and the unexpected classes are logged with a backtrace so a
+    # real bug is still diagnosable rather than merely absorbed.
+    rescue StandardError => e
+      meter_failed_attempt(e)
+      mark_transcript_failure!(e, client_message_for(e))
+      @transcript_failed = true
       nil
+    end
+
+    # What the CLIENT is allowed to read about a failure.
+    #
+    # Llm::Error messages are written for this: the adapters deliberately reduce
+    # provider internals to things like "provider request failed (status 502)"
+    # before raising. Everything else reaching the widened rescue is an internal
+    # exception whose message routinely carries SQL and column names
+    # (ActiveRecord::StatementInvalid), bucket names and object keys
+    # (Aws::S3::Errors), or filesystem paths (Errno::*) — and this string is
+    # serialized to the public `errors` key and printed in the playground. That
+    # is CWE-209, and ExceptionHandler already forbids it for controllers.
+    # The real message goes to the log with a backtrace instead.
+    def client_message_for(error)
+      return error.message if error.is_a?(Llm::Error)
+
+      Rails.logger.error(
+        "Scribe::Orchestrator transcript extraction failed for session=#{session.id} " \
+        "modality=#{session.modality}: #{error.class}: #{error.message}\n" \
+        "#{Array(error.backtrace).first(10).join("\n")}"
+      )
+      "transcript extraction failed"
+    end
+
+    # Records provider spend on an attempt we could not use.
+    #
+    # A truncated extraction or an empty completion arrives as a 200: the
+    # provider counted those tokens and will invoice them whether or not the
+    # result was usable. Metering only the successes meant every such attempt —
+    # and every retry of one — was real money absorbed silently, invisible in
+    # both the admin ledger and the usage API.
+    #
+    # Recorded as :failed and deliberately NOT passed to QuotaGuard.deduct!: the
+    # customer is not charged for a run that produced nothing (the UI promises
+    # exactly that), but our own cost stops being invisible. Errors that carry
+    # no usage — a timeout, a 5xx, a connection reset — are skipped, because
+    # nothing was returned and nothing was billed.
+    def meter_failed_attempt(error)
+      return unless error.respond_to?(:billable?) && error.billable?
+
+      function = session.modality_document? ? :ocr : :asr
+      Metering::UsageRecorder.record(
+        account: session.account,
+        function: function,
+        result: Llm::Result.new(
+          usage: usage_for_failed_attempt(error.usage, function),
+          provider: error.provider, model: error.model, latency_ms: error.latency_ms
+        ),
+        api_token: session.api_token,
+        scribe_session: session,
+        status: :failed,
+        # OCR keys by attempt number, so this failure occupies attempt N and a
+        # retry's success takes N+1 — one row per physical attempt, which is the
+        # point. Anything else gets an explicit ":failed" suffix so it can never
+        # occupy the key a later SUCCESS needs: that collision would raise
+        # RecordNotUnique inside the best-effort #meter, skip QuotaGuard.deduct!,
+        # and leave a real charge unbilled and permanently marked failed.
+        dedupe_key: function == :ocr ? dedupe_key_for(:ocr, nil) : "#{session.id}:#{function}:failed"
+      )
+    rescue StandardError => e
+      Rails.logger.error(
+        "Scribe::Orchestrator failed-attempt metering failed for session=#{session.id}: " \
+        "#{e.class}: #{e.message}"
+      )
+      nil
+    end
+
+    # The adapter's usage knows tokens but nothing about pages — OcrStage grafts
+    # the count on, and that only happens on the success path. Without this the
+    # :failed event prices at Llm::Usage's default `pages: 0`, so PriceBook's
+    # per-page component comes out at zero and the failed attempt records only
+    # its token cost. That would hide exactly the quantity the commit hold was
+    # sized on, on the one modality this metering exists for.
+    def usage_for_failed_attempt(usage, function)
+      return usage unless function == :ocr && usage
+
+      Llm::Usage.new(
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        audio_seconds: usage.audio_seconds,
+        pages: session.document_pages,
+        estimated: usage.estimated
+      )
     end
 
     # Runs vision OCR once over all attached documents, persists the extracted
@@ -103,7 +196,11 @@ module Scribe
     def transcript_from_documents!
       config = Llm::ConfigResolver.call(function: :ocr, account: session.account)
 
-      documents = session.document_files.map do |file|
+      # Sorted by attachment id, which is upload order, which is the order the
+      # client intended the report to read in. The association carries no ORDER
+      # BY of its own, so page 3 of a split report could otherwise be transcribed
+      # ahead of page 1 and the extracted text would interleave silently.
+      documents = session.document_files.attachments.sort_by(&:id).map do |file|
         {
           data: file.blob.download,
           content_type: file.blob.content_type,
@@ -123,6 +220,11 @@ module Scribe
         provider: stage.provider,
         model: stage.model
       )
+      # Ordered BEFORE the success so each abandoned attempt takes the lower
+      # attempt number: ocr_attempt_number counts rows already written, so
+      # metering the discard first yields ":ocr:0" for the attempt that failed
+      # and ":ocr:1" for the one that worked, which is the real sequence.
+      Array(stage.discarded_attempts).each { |e| meter_failed_attempt(e) }
       meter(function: :ocr, stage: stage)
       transcript
     end
@@ -185,8 +287,8 @@ module Scribe
       )
     end
 
-    def asr_failed?
-      @asr_failed
+    def transcript_failed?
+      @transcript_failed
     end
 
     def persist_transcript!(asr_result)
@@ -200,14 +302,16 @@ module Scribe
       )
     end
 
-    # ASR is shared: if it fails, no output can be produced. Mark the session and
-    # every output failed and stop.
-    def mark_asr_failure!(error)
+    # The transcript is shared: if it cannot be produced — by ASR, by segment
+    # assembly, or by document OCR — no output can be. Mark the session and every
+    # output failed and stop. Named for the transcript rather than for ASR
+    # because the document modality reaches it too.
+    def mark_transcript_failure!(error, message = error.message)
       session.scribe_outputs.each do |output|
-        output.result_errors = Array(output.result_errors) + [ { message: error.message } ]
+        output.result_errors = Array(output.result_errors) + [ { message: message } ]
         output.update!(status: :failure)
       end
-      session.update!(status: :failed, error: { message: error.message })
+      session.update!(status: :failed, error: { message: message })
     end
 
     # Each output is isolated: a failure sets that output to :failure and pushes
@@ -364,9 +468,28 @@ module Scribe
     def dedupe_key_for(function, scribe_output)
       if scribe_output
         "#{session.id}:#{scribe_output.id}:#{function}"
+      elsif function == :ocr
+        "#{session.id}:ocr:#{ocr_attempt_number}"
       else
         "#{session.id}:#{function}"
       end
+    end
+
+    # OCR is metered once per PHYSICAL attempt, which is the pipeline's stated
+    # metering contract (see this class's header). A re-commit of a failed
+    # document session finds no transcript, runs OCR again, and is charged again
+    # by the provider — but a key of "{session}:ocr" collided with the first
+    # attempt's row on the unique (api_token_id, dedupe_key) index, and the
+    # RecordNotUnique was swallowed by the best-effort #meter. Every retry after
+    # the first was therefore real provider spend billed to nobody.
+    #
+    # Counting prior attempts is safe rather than racy: commit's atomic claim
+    # (only one request may move a session to :processing) makes the orchestrator
+    # single-flight per session. A job retry that re-runs a SETTLED attempt still
+    # short-circuits earlier, at `session.transcript.present?`, so it never
+    # reaches here and cannot double-bill.
+    def ocr_attempt_number
+      session.usage_events.where(function: "ocr").count
     end
 
     # Adapts a stage result struct to the Llm::Result contract the meter reads.
