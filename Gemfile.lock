@@ -303,6 +303,8 @@ GEM
     pg (1.5.9)
     pp (0.6.4)
       prettyprint
+    pretender (1.0.0)
+      actionpack (>= 7.2)
     prettyprint (0.2.0)
     prism (1.9.0)
     propshaft (1.1.0)
@@ -527,6 +529,7 @@ DEPENDENCIES
   pagy (~> 6.0)
   pdf-reader (~> 2.12)
   pg (~> 1.1)
+  pretender (~> 1.0)
   propshaft
   pry
   puma (>= 5.0)

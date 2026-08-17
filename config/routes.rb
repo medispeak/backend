@@ -5,7 +5,11 @@ Rails.application.routes.draw do
   # every day-to-day surface lives in the first-class UI below. Gated by
   # Admin::ApplicationController on User#admin?.
   namespace :admin do
-    resources :users
+    resources :users do
+      # Starting is an admin power, so it lives here. Stopping cannot — see the
+      # top-level :impersonation route below.
+      post :impersonate, on: :member
+    end
     resources :accounts
     resources :templates
     resources :pages, except: [ :destroy ]
@@ -31,6 +35,11 @@ Rails.application.routes.draw do
   # ---------------------------------------------------------------------------
   # Application UI
   # ---------------------------------------------------------------------------
+
+  # Outside :admin by necessity: impersonating drops admin?, which locks the
+  # admin out of /admin, so the exit has to be reachable without it.
+  resource :impersonation, only: [ :destroy ]
+
   resources :scribe_sessions, only: [ :index, :show ] do
     # One part of the consultation's recording, streamed behind the same policy
     # as the page that plays it. A session's audio is either one stored blob or

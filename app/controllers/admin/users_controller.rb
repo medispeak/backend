@@ -1,5 +1,23 @@
 module Admin
   class UsersController < Admin::ApplicationController
+    # Start viewing the app as this user. The redirect leaves /admin because
+    # this request is the last one that still has admin powers — from the next
+    # one on, current_user is the target and authenticate_admin turns us away.
+    def impersonate
+      target = User.find(params[:id])
+
+      # Privileges follow the impersonated identity, so impersonating another
+      # admin would hand straight back the powers this feature exists to drop —
+      # and with them the ability to write, defeating the read-only guard.
+      if target.admin?
+        return redirect_to admin_user_path(target),
+                           alert: "Cannot view as another admin."
+      end
+
+      impersonate_user(target)
+      redirect_to root_path, notice: "Now viewing as #{target.email}."
+    end
+
     # Overwrite any of the RESTful controller actions to implement custom behavior
     # For example, you may want to send an email after a foo is updated.
     #

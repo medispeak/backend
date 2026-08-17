@@ -1,0 +1,17 @@
+<%#
+Adds a "View as user" button to Administrate's stock show page.
+
+Rendering the gem's own template rather than copying it keeps this to the one
+thing we're adding — :header_last is the hook it provides for exactly this.
+%>
+
+<% unless page.resource.admin? %>
+  <% content_for(:header_last) do %>
+    <%= button_to "View as user",
+                  impersonate_admin_user_path(page.resource),
+                  class: "button",
+                  data: { turbo_confirm: "View the app as #{page.resource.email}? You will be read-only until you stop." } %>
+  <% end %>
+<% end %>
+
+<%= render template: "administrate/application/show", locals: { page: page } %>
