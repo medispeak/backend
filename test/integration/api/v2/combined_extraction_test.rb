@@ -106,28 +106,25 @@ module Api
 
       # ── the gates: each falls back to the two-call path, never a 4xx ──────
 
-      test "a declared transcript output keeps the two-call path" do
+      test "a declared transcript output still runs combined, and its text is null" do
         assign_combined_ocr!
-        # OCR text, then structuring JSON — two calls.
-        stub_request(:post, CHAT_URL).to_return(
-          { status: 200, headers: { "Content-Type" => "application/json" },
-            body: { choices: [ { message: { content: "Hemoglobin 13.5" }, finish_reason: "stop" } ],
-                    usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json },
-          { status: 200, headers: { "Content-Type" => "application/json" },
-            body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
-                    usage: { prompt_tokens: 200, completion_tokens: 20 } }.to_json }
-        )
+        stub_structured
         id = document_session(outputs: [ { type: "transcript" }, { type: "form", page_id: nil } ])
 
         post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
 
         session = ScribeSession.find(id)
         assert_equal "completed", session.status
-        assert_includes session.transcript.text, "Hemoglobin", "the text must still exist"
-        assert_requested :post, CHAT_URL, times: 2
+        # One structured output = ONE call. The transcript output is an echo of
+        # the stub, so it reports the truth: no text was produced.
+        assert_requested :post, CHAT_URL, times: 1
+        assert_nil session.transcript.text
+        echo = session.scribe_outputs.find { |o| o.output_type == "transcript" }
+        assert_equal "success", echo.status
+        assert_nil echo.result["text"]
       end
 
-      test "more than one output keeps the two-call path" do
+      test "two form outputs each get their own combined call" do
         assign_combined_ocr!
         second = create(:page, template: @page.template)
         create(:form_field, page: second, title: "wbc", friendly_name: "WBC", field_type: "string")
@@ -141,26 +138,28 @@ module Api
 
         post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
 
-        # The split path: an extracted transcript exists, and there was more
-        # than one call. Not pinned to an exact count — a schema-repair re-ask
-        # legitimately adds one and is not what this test is about.
-        assert_not_nil ScribeSession.find(id).transcript.text
-        assert_requested :post, CHAT_URL, at_least_times: 3
+        # One combined call per structured output — which costs MORE than one
+        # extraction feeding two cheap text calls. The operator asked for it.
+        # Pinned on the usage events rather than the raw request count, which a
+        # schema-repair re-ask legitimately inflates.
+        assert_equal 2, UsageEvent.where(scribe_session_id: id, function: "ocr").count
+        assert_equal 0, UsageEvent.where(scribe_session_id: id, function: "structuring").count
+        assert_nil ScribeSession.find(id).transcript.text
       end
 
-      test "a report longer than the page limit keeps the two-call path" do
+      test "a longer report still runs combined" do
         assign_combined_ocr!
         stub_request(:post, CHAT_URL).to_return(
           status: 200, headers: { "Content-Type" => "application/json" },
           body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
                   usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
         )
-        id = document_session(pages: Scribe::Orchestrator::MAX_COMBINED_PAGES + 1)
+        id = document_session(pages: 5)
 
         post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
 
-        assert_requested :post, CHAT_URL, times: 2
-        assert_not_nil ScribeSession.find(id).transcript.text
+        assert_requested :post, CHAT_URL, times: 1
+        assert_nil ScribeSession.find(id).transcript.text
       end
 
       test "a model that cannot return structured JSON keeps the two-call path" do
@@ -213,7 +212,7 @@ module Api
 
       # A note output has its own field, prompt and { note: ... } result shape;
       # the combined path would return a form-shaped result.
-      test "a note output keeps the two-call path" do
+      test "a note output runs combined and keeps its own result shape" do
         assign_combined_ocr!
         stub_request(:post, CHAT_URL).to_return(
           status: 200, headers: { "Content-Type" => "application/json" },
@@ -225,7 +224,8 @@ module Api
         post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
 
         session = ScribeSession.find(id)
-        assert_not_nil session.transcript.text
+        assert_requested :post, CHAT_URL, times: 1
+        assert_nil session.transcript.text
         assert_equal "text", session.scribe_outputs.sole.result["note"]
       end
 
@@ -252,43 +252,23 @@ module Api
       # Production, 2026-08-17: ocr_mode was set and every session still took
       # the two-call path, with no signal anywhere as to why. The operator has
       # to be able to find out.
-      test "skipping a configured combined run says which guard refused" do
-        assign_combined_ocr!
+      test "skipping for an incapable model says so" do
+        assign_combined_ocr!(capabilities: { "supports_vision" => true, "supports_pdf" => true })
         stub_request(:post, CHAT_URL).to_return(
           status: 200, headers: { "Content-Type" => "application/json" },
           body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
                   usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
         )
-        id = document_session(outputs: [ { type: "transcript" }, { type: "form", page_id: nil } ])
+        id = document_session
 
         logged = capture_orchestrator_log do
           post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
         end
 
         assert_match(/combined extraction skipped for session=#{id}/, logged)
-        # The RIGHT reason: a transcript output costs no provider call, so
-        # "too many outputs" would be a misleading diagnosis for this shape.
-        assert_match(/transcript output was declared/, logged)
-        assert_no_match(/2 outputs declared/, logged)
+        assert_match(/schema-valid JSON/, logged)
       end
 
-      test "a two-form session is refused for the cost reason, not the transcript one" do
-        assign_combined_ocr!
-        second = create(:page, template: @page.template)
-        create(:form_field, page: second, title: "wbc", friendly_name: "WBC", field_type: "string")
-        stub_request(:post, CHAT_URL).to_return(
-          status: 200, headers: { "Content-Type" => "application/json" },
-          body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
-                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
-        )
-        id = document_session(outputs: [ { type: "form", page_id: @page.id },
-                                         { type: "form", page_id: second.id } ])
-
-        logged = capture_orchestrator_log do
-          post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
-        end
-        assert_match(/2 outputs declared/, logged)
-      end
 
       # ── failure ──────────────────────────────────────────────────────────
 

@@ -28,8 +28,6 @@ module Scribe
 
     NOTE_KEY = "note".freeze
 
-    # Combined extraction is for a short report — see #combined_extraction?.
-    MAX_COMBINED_PAGES = 2
     # The "transcript" a combined run structures from: there is none, so say so
     # rather than sending an empty string, which reads as "the document was
     # blank" to a model that is also being handed the document itself.
@@ -244,36 +242,18 @@ module Scribe
     # nil when the session is eligible, else why it is not — in the operator's
     # terms, not the code's.
     def combined_skip_reason
-      outputs = session.scribe_outputs.to_a
-
-      # A transcript output IS the extracted text, which this path never
-      # produces. Checked BEFORE the count: a transcript output costs no
-      # provider call (it echoes the persisted text), so "too many outputs"
-      # would be the wrong diagnosis for the common transcript+form session.
-      if outputs.any? { |o| o.output_type == "transcript" }
-        return "a transcript output was declared, and combined extraction emits no text — " \
-               "drop it to use combined extraction"
-      end
-
-      # Only outputs that actually cost a provider call count: re-sending the
-      # document per output is what makes combining more expensive, not echoes.
-      billable = outputs.reject { |o| o.output_type == "transcript" }
-      return "no output to fill" if billable.empty?
-
-      if billable.size > 1
-        return "#{billable.size} outputs declared — combining re-sends the document per output, " \
-               "which costs more than one extraction feeding them all"
-      end
-
-      unless billable.first.output_type == "form"
-        return "the output is a #{billable.first.output_type}, which has its own result shape; " \
-               "combined extraction fills form outputs only"
-      end
-
-      if session.document_pages > MAX_COMBINED_PAGES
-        return "#{session.document_pages} pages, over the #{MAX_COMBINED_PAGES}-page limit for combined extraction"
-      end
-
+      # Only ONE thing stops a configured mode now: a model that cannot return
+      # schema-valid JSON would produce unusable output, so that falls back to
+      # the two-call path rather than failing the run outright.
+      #
+      # Deliberately NOT checked any more — the operator asked for one call, so
+      # they get one call:
+      #   * a declared transcript output. It resolves to text: null, because
+      #     that is the truth: no text was produced.
+      #   * more than one structured output. Each gets its own combined call,
+      #     which re-sends the document and therefore costs MORE than one
+      #     extraction feeding N cheap text calls. Their trade to make.
+      #   * page count. The output budget is sized per call anyway.
       unless structuring_capable?(ocr_config)
         return "#{ocr_config.api_model_id} is not marked able to return schema-valid JSON " \
                "(needs can_structure, plus supports_json_schema unless it is an Anthropic model)"
@@ -297,25 +277,49 @@ module Scribe
     # Runs the single output through one vision call. Mirrors #call's per-output
     # isolation, metering and rollup so nothing downstream can tell the
     # difference except that the transcript carries no text.
+    # One vision call PER structured output, each reading the document directly.
+    # A single-output session — the case this exists for — is therefore exactly
+    # one provider call. Transcript outputs are echoes and run last, since they
+    # need the stub to exist.
     def call_combined
-      output = session.scribe_outputs.first
-      unless output.status_success?
+      structured, echoes = session.scribe_outputs.partition { |o| o.output_type != "transcript" }
+
+      structured.each do |output|
+        next if output.status_success?
+
         stage = process_combined_output(output)
-        meter_combined(stage) if stage
+        break if stage.nil? # the run failed; do not spend another call
+
+        meter_combined(stage)
       end
+
+      unless transcript_failed?
+        echoes.each do |output|
+          next if output.status_success?
+
+          process_transcript_output(output, session.reload.transcript)
+        end
+      end
+
       finalize_session_status!
       session
     end
 
     def process_combined_output(output)
       stage = combined_stage_for(output)
-      output.result = stage.structured
-      # :partial, not :failure, and result_errors only when there are some —
-      # the column is NOT NULL. Same shape as the split path's form output, so
-      # the rollup and the UI cannot tell which path produced it.
-      if stage.valid
+      # A note output keeps its own { note: ... } contract, as the split path
+      # builds it — the shape is the client's, not this path's business.
+      if output.output_type == NOTE_KEY
+        output.result = { note: (stage.structured || {})[NOTE_KEY] }
+        output.status = :success
+      elsif stage.valid
+        output.result = stage.structured
         output.status = :success
       else
+        # :partial, not :failure, and result_errors only when there are some —
+        # the column is NOT NULL. Same shape as the split path's form output, so
+        # the rollup and the UI cannot tell which path produced it.
+        output.result = stage.structured
         output.status = :partial
         output.result_errors = stage.errors
       end
@@ -338,7 +342,10 @@ module Scribe
     end
 
     def combined_stage_for(output)
-      if output.inline_fields.present?
+      if output.output_type == NOTE_KEY
+        fields = [ note_field ]
+        system_prompt = output.template_ref.presence || output.page&.prompt
+      elsif output.inline_fields.present?
         fields = Scribe::InlineField.build_all(output.inline_fields)
         system_prompt = nil
       else
