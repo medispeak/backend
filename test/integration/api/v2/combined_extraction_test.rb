@@ -190,6 +190,65 @@ module Api
         assert_requested :post, CHAT_URL, times: 2
       end
 
+      # OpenaiCompatible#structure constrains the response only via
+      # response_format when supports_json_schema is set — it sends no tools —
+      # so function-calling alone would mean no schema constraint at all.
+      test "supports_function_calling alone is not enough on an openai-compatible model" do
+        assign_combined_ocr!(capabilities: {
+          "supports_vision" => true, "supports_pdf" => true,
+          "can_structure" => true, "supports_function_calling" => true
+        })
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
+        )
+        id = document_session
+
+        post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+
+        assert_requested :post, CHAT_URL, times: 2
+        assert_not_nil ScribeSession.find(id).transcript.text
+      end
+
+      # A note output has its own field, prompt and { note: ... } result shape;
+      # the combined path would return a form-shaped result.
+      test "a note output keeps the two-call path" do
+        assign_combined_ocr!
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: { note: "text" }.to_json }, finish_reason: "stop" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
+        )
+        id = document_session(outputs: [ { type: "note" } ])
+
+        post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+
+        session = ScribeSession.find(id)
+        assert_not_nil session.transcript.text
+        assert_equal "text", session.scribe_outputs.sole.result["note"]
+      end
+
+      # A :partial output is retried on re-commit and reaches the stub-transcript
+      # write again. Transcript is a has_one — a second create would duplicate.
+      test "re-committing a partial combined run does not duplicate the transcript" do
+        assign_combined_ocr!
+        # Schema-invalid: the field is missing, so the output lands :partial.
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: { wrong_key: "x" }.to_json }, finish_reason: "stop" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
+        )
+        id = document_session
+
+        post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+        assert_equal 1, Transcript.where(scribe_session_id: id).count
+
+        post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+        assert_equal 1, Transcript.where(scribe_session_id: id).count,
+                     "the retry created a second transcript row"
+      end
+
       # ── failure ──────────────────────────────────────────────────────────
 
       test "a failed combined call fails the session with a generic message" do

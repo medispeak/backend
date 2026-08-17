@@ -228,8 +228,11 @@ module Scribe
       # A transcript output IS the text — combining would make it permanently
       # empty. More than one output would re-send the document per output,
       # which costs MORE than one OCR feeding N cheap text calls.
+      # Form only. A transcript output IS the text, and a note output has its
+      # own field/prompt/result shape (see #process_note_output) that this path
+      # does not reproduce — it would return a form-shaped result.
       return false unless outputs.one?
-      return false if outputs.first.output_type == "transcript"
+      return false unless outputs.first.output_type == "form"
       # Pages, not bytes: the guard the OCR path relies on (a truncated read) is
       # unfireable here, because the response is ~150 tokens of JSON against a
       # 4096 floor. A short report keeps a silently half-read document out of
@@ -246,9 +249,16 @@ module Scribe
       false
     end
 
+    # Adapter-aware on purpose. The Anthropic adapter always forces a tool call,
+    # so can_structure is enough. The OpenAI-compatible adapter constrains the
+    # response ONLY via response_format when supports_json_schema is set — it
+    # sends no tools — so a model carrying just supports_function_calling would
+    # get no schema constraint at all and return free-form text.
     def structuring_capable?(config)
-      config.capability?(:can_structure) &&
-        (config.capability?(:supports_json_schema) || config.capability?(:supports_function_calling))
+      return false unless config.capability?(:can_structure)
+      return true if config.provider_kind == :anthropic
+
+      config.capability?(:supports_json_schema)
     end
 
     # Runs the single output through one vision call. Mirrors #call's per-output
@@ -309,8 +319,11 @@ module Scribe
       ).call(COMBINED_PROMPT, documents: documents!)
     end
 
+    # Idempotent: a :partial output is retried on re-commit and lands here
+    # again, and Transcript is a has_one — a second create would either violate
+    # the constraint or leave two rows.
     def persist_stub_transcript!(stage)
-      Transcript.create!(
+      session.reload.transcript || Transcript.create!(
         scribe_session: session, text: nil, language: session.language,
         provider: stage.provider, model: stage.model
       )
