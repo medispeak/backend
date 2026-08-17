@@ -29,6 +29,85 @@ class OpenrouterCatalogTest < ActiveSupport::TestCase
     end
   end
 
+  test "provision! creates every OCR model with vision capabilities, an output ceiling, and a token price" do
+    provider = OpenrouterCatalog.provision!
+
+    OpenrouterCatalog::OCR_MODELS.each do |slug, attrs|
+      model = AiModel.find_by!(ai_provider: provider, api_model_id: slug)
+      assert model.capability?(:supports_vision), slug
+      assert model.capability?(:supports_pdf), slug
+      # Some of these are structuring models too; that loop creates the shared
+      # row first, so the vision keys have to be merged in rather than set.
+      if OpenrouterCatalog::STRUCTURING_MODELS.key?(slug)
+        assert model.capability?(:can_structure), "#{slug} lost its structuring capability"
+      else
+        assert_equal attrs[:display_name], model.display_name
+      end
+
+      # The adapter reads this to decide how far it may let OcrStage's
+      # page-sized budget through; without it every long report is clamped to
+      # the adapter's conservative default.
+      ceiling = model.capabilities["max_output_tokens"]
+      assert_equal attrs[:max_output_tokens], ceiling, slug
+      assert_operator ceiling, :>=, Scribe::OcrStage::MAX_MAX_TOKENS,
+                      "#{slug} cannot deliver a full-cap document"
+
+      price = ModelPrice.current.find_by(provider: "OpenRouter", model: slug)
+      assert price, "token price for #{slug}"
+      assert_operator price.input_per_million, :>, 0
+      # OCR bills on tokens here; a DocumentModelPrice row would be charged ON
+      # TOP of that by PriceBook, i.e. billed twice for one call.
+      assert_nil DocumentModelPrice.current.find_by(provider: "OpenRouter", model: slug),
+                 "#{slug} must not carry a per-page price as well"
+    end
+  end
+
+  test "assign_default_ocr! points the System default at the chosen model with a different-vendor fallback" do
+    OpenrouterCatalog.provision!
+    assignment = OpenrouterCatalog.assign_default_ocr!
+
+    assert_equal "System", assignment.scope_type
+    assert_nil assignment.scope_id
+    assert_equal OpenrouterCatalog::DEFAULT_OCR_MODEL, assignment.ai_model.api_model_id
+    assert_equal OpenrouterCatalog::DEFAULT_OCR_FALLBACK_MODEL, assignment.fallback_ai_model.api_model_id
+    assert_not_equal assignment.ai_model.api_model_id.split("/").first,
+                     assignment.fallback_ai_model.api_model_id.split("/").first,
+                     "the fallback must not share the primary's vendor"
+
+    # What a document session actually resolves to, fallback included.
+    cfg = Llm::ConfigResolver.call(function: :ocr)
+    assert_equal OpenrouterCatalog::DEFAULT_OCR_MODEL, cfg.api_model_id
+    assert_equal "https://openrouter.ai/api/", cfg.base_url
+    assert_equal OpenrouterCatalog::DEFAULT_OCR_FALLBACK_MODEL, cfg.fallback.api_model_id
+    assert_equal OpenrouterCatalog::OCR_MODELS[OpenrouterCatalog::DEFAULT_OCR_MODEL][:max_output_tokens],
+                 cfg.capabilities[:max_output_tokens]
+  end
+
+  test "assign_default_ocr! leaves an operator's existing OCR choice alone" do
+    provider = OpenrouterCatalog.provision!
+    chosen = AiModel.find_by!(ai_provider: provider, api_model_id: "anthropic/claude-haiku-4.5")
+    create(:model_assignment, scope_type: "System", scope_id: nil, function: "ocr", ai_model: chosen)
+
+    assert_no_difference("ModelAssignment.count") { OpenrouterCatalog.assign_default_ocr! }
+    assert_equal "anthropic/claude-haiku-4.5", Llm::ConfigResolver.call(function: :ocr).api_model_id
+  end
+
+  test "the OCR default is priced end to end for a real document run" do
+    OpenrouterCatalog.provision!
+    OpenrouterCatalog.assign_default_ocr!
+    slug = OpenrouterCatalog::DEFAULT_OCR_MODEL
+    attrs = OpenrouterCatalog::OCR_MODELS[slug]
+
+    # A 12-page report: ~20k input tokens of image, ~9k of extracted markdown.
+    pricing = Metering::PriceBook.cost(function: :ocr, provider: "OpenRouter", model: slug,
+                                       usage: Llm::Usage.new(input_tokens: 20_000, output_tokens: 9_000, pages: 12))
+    expected = (20_000 / 1_000_000.0 * attrs[:input_per_million]) +
+               (9_000 / 1_000_000.0 * attrs[:output_per_million])
+    assert_in_delta expected, pricing[:cost], 1e-6
+    assert_operator pricing[:cost], :>, 0, "a metered OCR run must not price at zero"
+    assert_nil pricing[:unit_price_page], "no per-page component is configured for a token-billed model"
+  end
+
   test "provision! is idempotent and never overwrites existing rows" do
     provider = OpenrouterCatalog.provision!
     slug = OpenrouterCatalog::ASR_MODELS.keys.first

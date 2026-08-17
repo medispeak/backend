@@ -157,6 +157,65 @@ class PlaygroundControllerTest < ActionDispatch::IntegrationTest
     assert_includes claims["scope"], "document"
   end
 
+  # Production, 2026-08-17: an admin opened another tenant's template in the
+  # playground and every run 422'd. TemplatePolicy#show? returns true for any
+  # admin, so the page rendered with all its fields; SessionBuilder then scoped
+  # page_id to the CALLER's account (its tenancy check, which the public API
+  # depends on) and rejected the template's own page as non-existent. The run
+  # belongs to the account that owns the template.
+  test "an admin can run the playground on another account's template" do
+    admin = create(:user)
+    admin.update!(admin: true)
+    sign_in admin
+
+    other_page = create(:page, template: @other_template, name: "Their history")
+    create(:form_field, page: other_page, title: "chief_complaint",
+                        friendly_name: "Chief complaint", field_type: "string")
+
+    get template_playground_path(@other_template)
+    assert_response :success, "an admin may open another tenant's template"
+
+    assert_difference "ScribeSession.count", 1 do
+      post template_playground_sessions_path(@other_template), as: :json
+    end
+    assert_response :created
+
+    session = ScribeSession.find(JSON.parse(response.body)["session_id"])
+    assert_equal @other_account, session.account,
+                 "the run belongs to the template's account, not the admin's"
+    assert_equal admin, session.user, "and records who actually ran it"
+    assert_equal [ other_page.id ], session.scribe_outputs.map(&:page_id)
+  end
+
+  test "a document run on another account's template works the same way" do
+    admin = create(:user)
+    admin.update!(admin: true)
+    sign_in admin
+
+    other_page = create(:page, template: @other_template, name: "Their history")
+    create(:form_field, page: other_page, title: "chief_complaint",
+                        friendly_name: "Chief complaint", field_type: "string")
+
+    post template_playground_sessions_path(@other_template),
+         params: { modality: "document" }, as: :json
+
+    assert_response :created
+    session = ScribeSession.find(JSON.parse(response.body)["session_id"])
+    assert_equal "document", session.modality
+    assert_equal @other_account, session.account
+  end
+
+  # A non-admin is unchanged: they can only reach their own template, so the
+  # session's account is their own either way.
+  test "an ordinary user's run still belongs to their own account" do
+    sign_in @user
+    post template_playground_sessions_path(@template), as: :json
+
+    assert_response :created
+    session = ScribeSession.find(JSON.parse(response.body)["session_id"])
+    assert_equal @account, session.account
+  end
+
   test "create_session returns a scoped token that verifies for this session" do
     sign_in @user
     post template_playground_sessions_path(@template)
