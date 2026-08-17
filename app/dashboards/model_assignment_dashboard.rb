@@ -31,9 +31,10 @@ class ModelAssignmentDashboard < Administrate::BaseDashboard
     # takes down every resolver call (2026-08-16 incident).
     options: Field::JsonObject.with_options(
       hint: 'JSON object of resolver options, e.g. {} or {"asr_mode": "translate"}. ' \
-            'On an OCR assignment, {"ocr_mode": "extract_and_structure"} fills the form in ONE ' \
-            "vision call and emits no transcript text (~3x cheaper; applies only to a " \
-            "single-output session of 2 pages or fewer on a structuring-capable model)."
+            'On an OCR assignment, {"ocr_mode": "extract_and_structure"} fills each output in ONE ' \
+            "vision call and emits no transcript text (~3x cheaper on a single-output session; " \
+            "with several outputs the document is re-sent per output, which costs more). " \
+            "Needs a model marked able to return schema-valid JSON."
     ),
     created_at: Field::DateTime,
     updated_at: Field::DateTime
