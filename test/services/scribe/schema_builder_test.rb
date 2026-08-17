@@ -20,7 +20,7 @@ class SchemaBuilderTest < Minitest::Test
   def test_string_field
     schema = build([ Field.new(title: "name", friendly_name: "Name", field_type: "string") ])
     prop = schema[:properties]["name"]
-    assert_equal "string", prop[:type]
+    assert_equal [ "string", "null" ], prop[:type]
     assert_equal "Name", prop[:description]
   end
 
@@ -29,16 +29,16 @@ class SchemaBuilderTest < Minitest::Test
       Field.new(title: "smoker", friendly_name: "Smoker", field_type: "boolean"),
       Field.new(title: "age", friendly_name: "Age", field_type: "number")
     ])
-    assert_equal "boolean", schema[:properties]["smoker"][:type]
-    assert_equal "number", schema[:properties]["age"][:type]
+    assert_equal [ "boolean", "null" ], schema[:properties]["smoker"][:type]
+    assert_equal [ "number", "null" ], schema[:properties]["age"][:type]
   end
 
   def test_single_select_emits_enum_on_string
     schema = build([ Field.new(title: "sev", friendly_name: "Severity",
                               field_type: "single_select", enum_options: %w[low high]) ])
     prop = schema[:properties]["sev"]
-    assert_equal "string", prop[:type]
-    assert_equal %w[low high], prop[:enum]
+    assert_equal [ "string", "null" ], prop[:type]
+    assert_equal [ "low", "high", nil ], prop[:enum]
   end
 
   # The bug being fixed: multi_select must put enum on items, not the array.
@@ -46,7 +46,7 @@ class SchemaBuilderTest < Minitest::Test
     schema = build([ Field.new(title: "symptoms", friendly_name: "Symptoms",
                               field_type: "multi_select", enum_options: %w[cough fever]) ])
     prop = schema[:properties]["symptoms"]
-    assert_equal "array", prop[:type]
+    assert_equal [ "array", "null" ], prop[:type]
     assert_nil prop[:enum], "enum must NOT be on the array itself"
     assert_equal({ type: "string", enum: %w[cough fever] }, prop[:items])
   end

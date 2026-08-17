@@ -42,11 +42,15 @@ module Scribe
     private
 
     def field_schema(field, for_validation: false)
-      schema = { type: json_type(field), description: description_for(field) }
+      # Every field is optional (see `call` above) — the type must honestly
+      # allow `null` too, not just key absence, since some providers/modes
+      # return an explicit `null` for a field with no data instead of
+      # omitting the key.
+      schema = { type: [ json_type(field), "null" ], description: description_for(field) }
 
       case field.field_type.to_s
       when "single_select"
-        schema[:enum] = Array(field.enum_options) if present?(field.enum_options)
+        schema[:enum] = Array(field.enum_options) + [ nil ] if present?(field.enum_options)
       when "multi_select"
         items = { type: "string" }
         items[:enum] = Array(field.enum_options) if present?(field.enum_options)
