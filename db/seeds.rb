@@ -371,6 +371,12 @@ ModelAssignment.find_or_create_by!(scope_type: "System", scope_id: nil, function
   a.ai_model = gpt_4_1_mini_model
 end
 
+# Document (OCR) default: a vision model chosen for reading lab reports, with a
+# different-vendor fallback. Without this, ConfigResolver falls through to the
+# ENV default — a structuring model that happens to see images, whose 16k
+# output ceiling clamps a long report. See lib/openrouter_catalog.rb.
+OpenrouterCatalog.assign_default_ocr!
+
 # Demonstration Page-scoped assignment showing mix-and-match across providers:
 # the "Consultation Form" page uses open-source Llama 3.3 70B (via OpenRouter)
 # for structuring, while ASR still resolves to OpenAI Whisper from the System

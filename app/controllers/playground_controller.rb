@@ -41,7 +41,7 @@ class PlaygroundController < ApplicationController
     end
 
     result = Scribe::SessionBuilder.new(
-      account: current_account,
+      account: playground_account,
       user: current_user,
       outputs: @pages_with_fields.map { |page| { type: "form", page_id: page.id } },
       mode: "consultation",
@@ -139,5 +139,31 @@ class PlaygroundController < ApplicationController
   # value with an error the playground has no useful way to explain.
   def modality
     MODALITIES.include?(params[:modality]) ? params[:modality] : "audio"
+  end
+
+  # The account a playground run belongs to: the one that owns the TEMPLATE,
+  # not whoever is driving the browser.
+  #
+  # For every ordinary user these are the same account — TemplatePolicy#show?
+  # only lets you open a template your own account owns. They differ for an
+  # ADMIN, who may open any tenant's template (`owned_or_admin?` returns true
+  # for admins, and the policy scope returns every template). Building the
+  # session under the admin's own account then made SessionBuilder reject the
+  # template's own pages: its tenancy check scopes page_id to
+  # `templates.account_id IN (NULL, caller_account)`, deliberately, so the
+  # public API cannot read another tenant's schema. Every admin playground run
+  # therefore 422'd with "page_id N does not reference an existing page" —
+  # after rendering a page full of fields, which made it look like a bug in the
+  # run rather than in who the run belonged to.
+  #
+  # Attributing it to the template's account is also the only way the
+  # playground tells the truth: ConfigResolver walks the account tree to pick
+  # the model assignments, so a run under a different account would exercise
+  # different models than the template really uses, and its metering would land
+  # on a tenant that never touched it. A legacy template with no account
+  # (account_id NULL) still falls back to the caller, which the tenancy check
+  # already allows.
+  def playground_account
+    @template.account || current_account
   end
 end
