@@ -66,4 +66,28 @@ class SchemaValidatorTest < Minitest::Test
     assert_equal 0, invoked
     assert_empty errs
   end
+
+  # Reasoning-model leak: a string field holding JSON-encoded nested data
+  # (e.g. a medication array) with trailing scratchpad text appended after it.
+  def test_rejects_json_looking_string_with_trailing_garbage
+    leaked = '[{"medicine":{"code":""}}] However I am not sure about the last character.'
+    refute validator.valid?({ "notes" => leaked })
+    errs = validator.errors({ "notes" => leaked })
+    assert(errs.any? { |e| e[:type] == "malformed_json_string" })
+  end
+
+  def test_accepts_well_formed_json_string
+    assert validator.valid?({ "notes" => '[{"medicine":{"code":""}}]' })
+  end
+
+  def test_plain_prose_string_is_not_flagged_as_malformed_json
+    assert validator.valid?({ "notes" => "low" })
+  end
+
+  # A plain-text answer that happens to be bracket-wrapped (a stylistic
+  # annotation, not a leaked structured payload) must not be flagged.
+  def test_bracketed_plain_text_is_not_flagged_as_malformed_json
+    assert validator.valid?({ "notes" => "[not mentioned]" })
+    assert validator.valid?({ "notes" => "{pending}" })
+  end
 end

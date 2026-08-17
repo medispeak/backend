@@ -11,11 +11,13 @@ module Scribe
     end
 
     def valid?(data)
-      @schemer.valid?(normalize(data))
+      errors(data).empty?
     end
 
     def errors(data)
-      @schemer.validate(normalize(data)).map { |e| format_error(e) }
+      normalized = normalize(data)
+      @schemer.validate(normalized).map { |e| format_error(e) } +
+        malformed_json_string_errors(normalized)
     end
 
     # Returns [data, []] when valid. When invalid and a block is given, calls the
@@ -38,6 +40,41 @@ module Scribe
         type: err["type"],
         message: err["error"] || "#{err['data_pointer']} failed #{err['type']} validation"
       }
+    end
+
+    # Callers embed nested structured sub-data (medication, diagnosis, …) as a
+    # JSON-encoded string inside an otherwise plain "string" field — a shape
+    # the JSON Schema itself can't constrain. A reasoning model occasionally
+    # leaks scratchpad text after (or instead of) the real JSON there, which
+    # is schema-valid (still a string) but unusable. Treat a value that looks
+    # like JSON but doesn't fully parse as a validation failure so it goes
+    # through the same bounded repair re-ask as any other error.
+    def malformed_json_string_errors(data)
+      return [] unless data.is_a?(Hash)
+
+      data.each_with_object([]) do |(key, value), errs|
+        next unless value.is_a?(String)
+
+        trimmed = value.strip
+        next unless looks_like_json_payload?(trimmed)
+
+        begin
+          JSON.parse(trimmed)
+        rescue JSON::ParserError
+          errs << {
+            pointer: "/#{key}",
+            type: "malformed_json_string",
+            message: "value at /#{key} looks like malformed or truncated JSON"
+          }
+        end
+      end
+    end
+
+    # A leading [ or { alone also matches plain-text answers like
+    # "[not mentioned]" or "{pending}" — require an actual "key": shape too,
+    # so only a real (but broken) object/array payload is flagged.
+    def looks_like_json_payload?(text)
+      text.start_with?("[", "{") && text.include?('":')
     end
 
     def deep_stringify(obj)
