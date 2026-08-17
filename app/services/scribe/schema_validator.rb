@@ -61,13 +61,26 @@ module Scribe
         begin
           JSON.parse(trimmed)
         rescue JSON::ParserError
+          pointer = "/#{escape_pointer_token(key)}"
           errs << {
-            pointer: "/#{key}",
+            pointer: pointer,
             type: "malformed_json_string",
-            message: "value at /#{key} looks like malformed or truncated JSON"
+            # Spelled out for the repair re-ask, which only ever sees these
+            # messages: name both failure modes so the model knows what to do.
+            message: "value at `#{pointer}` is a JSON payload that does not " \
+                     "parse (truncated or over-escaped); re-send it complete " \
+                     "and escaped exactly once"
           }
         end
       end
+    end
+
+    # Field titles are free text and really do contain "/" ("Procedure /
+    # Surgery Planned"), so hand-built pointers need the same RFC 6901 escaping
+    # json_schemer applies — otherwise the two error sources disagree about how
+    # to name the same field. "~" first, or it would double-escape the "~1".
+    def escape_pointer_token(key)
+      key.to_s.gsub("~", "~0").gsub("/", "~1")
     end
 
     # A leading [ or { alone also matches plain-text answers like
@@ -88,7 +101,21 @@ module Scribe
     # Round-trip through JSON so symbol-keyed Ruby hashes become string-keyed,
     # which is what JSON Schema validation expects.
     def normalize(data)
-      JSON.parse(data.is_a?(String) ? data : JSON.generate(data))
+      drop_nulls(JSON.parse(data.is_a?(String) ? data : JSON.generate(data)))
+    end
+
+    # Every field is optional (SchemaBuilder emits `required: []`), but OpenAI
+    # strict mode cannot express that — the adapter has to mark every key
+    # required and nullable, so the model spells "not mentioned in the
+    # transcript" as an explicit null. Validating those against the core
+    # schema's non-nullable "string"/"number" made the validator reject the
+    # exact shape we asked the model for: it accounted for essentially every
+    # structuring error in production, and each one burned a repair re-ask that
+    # could only ever come back null again. Treat null as absent instead.
+    def drop_nulls(data)
+      return data unless data.is_a?(Hash)
+
+      data.reject { |_, value| value.nil? }
     end
   end
 end
