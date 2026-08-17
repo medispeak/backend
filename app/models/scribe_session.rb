@@ -77,13 +77,31 @@ class ScribeSession < ApplicationRecord
   # What kind of source this session ingests: recorded audio (ASR) or an
   # uploaded lab report / document (vision OCR). Prefixed predicates
   # (modality_audio? / modality_document?) keep the bare audio-ish names free.
-  enum :modality, { audio: "audio", document: "document" }, prefix: :modality
+  # "pending" is server-managed (SessionBuilder::CLIENT_MODALITIES): a caller
+  # who declares nothing gets it, and #claim_modality fixes it on first upload.
+  enum :modality, { pending: "pending", audio: "audio", document: "document" }, prefix: :modality
 
   validates :status, presence: true
   validate :callback_url_is_safe
 
   def expired?
     expires_at.present? && expires_at < Time.current
+  end
+
+  # Fixes an undeclared session's modality to the surface of its first stored
+  # upload. Returns false when a concurrent first upload claimed the other one.
+  #
+  # Conditional UPDATE, not a read-check-write: one token can drive all four
+  # upload surfaces at once, and two claimants both passing `modality_pending?`
+  # would leave a session holding audio AND documents.
+  def claim_modality(kind)
+    return true if modality == kind.to_s
+    return false unless modality_pending?
+
+    self.class.where(id: id, modality: "pending")
+        .update_all(modality: kind.to_s, updated_at: Time.current)
+    reload
+    modality == kind.to_s
   end
 
   # The growing transcript DURING recording: the done segments' texts, in seq

@@ -25,10 +25,27 @@ module Scribe
       assert result.success?
       assert_equal @account, result.session.account
       assert_equal "created", result.session.status
-      assert_equal "audio", result.session.modality
+      assert_equal "pending", result.session.modality
       assert_equal "consultation", result.session.mode
       assert_equal 3, result.session.scribe_outputs.count
       assert_equal %w[transcript form form], result.session.scribe_outputs.order(:id).map(&:output_type)
+    end
+
+    test "a declared modality is kept" do
+      %w[audio document].each do |kind|
+        result = build(outputs: [ { type: "transcript" } ], modality: kind)
+        assert_equal kind, result.session.modality
+      end
+    end
+
+    # "pending" is server-managed: a client asking for it is asking for nothing,
+    # so it lands where omitting it does.
+    test "a client cannot declare pending, or any other unknown modality" do
+      [ "pending", "telepathy", "" ].each do |bad|
+        result = build(outputs: [ { type: "transcript" } ], modality: bad)
+        assert result.success?, bad
+        assert_equal "pending", result.session.modality, bad
+      end
     end
 
     test "rejects an empty outputs array" do

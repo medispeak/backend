@@ -94,6 +94,8 @@ module Api
           return
         end
 
+        return if claim_modality_or_reject(session, "audio")
+
         # Attach with the normalized (parameter-stripped) content-type so the
         # blob passes the model's audio-type validation and ASR sees a clean type.
         session.audio_files.attach(
@@ -144,6 +146,8 @@ module Api
           render_error(code: "audio_upload_failed", message: "total audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
           return
         end
+
+        return if claim_modality_or_reject(session, "audio")
 
         chunk = session.audio_chunks.find_or_initialize_by(seq: seq)
         chunk.content_type = content_type
@@ -216,6 +220,8 @@ module Api
           render_error(code: "audio_upload_failed", message: "total segment audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
           return
         end
+
+        return if claim_modality_or_reject(session, "audio")
 
         segment = session.transcript_segments.find_or_initialize_by(seq: seq)
         segment.content_type = content_type
@@ -296,6 +302,7 @@ module Api
         # ones this action was dispatched with.
         rejection = nil
         too_late = false
+        wrong_modality = false
         session.with_lock do
           # The status guard above is only a fast path: counting pages can take
           # up to PDF_PARSE_TIMEOUT_SECONDS, and a commit racing that window
@@ -305,12 +312,18 @@ module Api
           # lock, where the claim is serialized against commit's own UPDATE.
           if !session.created? && !session.uploading?
             too_late = true
+          # Claimed below, with the attach: the ceilings here must be able to
+          # refuse without deciding anything. Safe under the row lock — a racing
+          # audio claim either committed before it (we 409) or blocks and loses.
+          elsif !session.modality_pending? && !session.modality_document?
+            wrong_modality = true
           elsif attached_bytes_of(session, :document_files) + upload.size.to_i >
                 ScribeSession::MAX_DOCUMENT_BYTES
             rejection = "total documents exceed #{ScribeSession::MAX_DOCUMENT_BYTES} bytes"
           elsif session.document_pages + pages > ScribeSession::MAX_DOCUMENT_PAGES
             rejection = "total pages exceed #{ScribeSession::MAX_DOCUMENT_PAGES}"
           else
+            session.modality = "document" if session.modality_pending?
             session.document_files.attach(
               io: upload.tempfile.tap(&:rewind),
               filename: upload.original_filename,
@@ -326,6 +339,14 @@ module Api
           render_error(
             code: "validation_error",
             message: "documents cannot be uploaded from status #{session.status}",
+            status: :conflict
+          )
+          return
+        end
+        if wrong_modality
+          render_error(
+            code: "validation_error",
+            message: "this endpoint requires a document session (modality is #{session.modality})",
             status: :conflict
           )
           return
@@ -350,7 +371,17 @@ module Api
         # storage stream); document -> at least one uploaded document. This
         # guard sits BEFORE the atomic claim and OUTSIDE with_idempotency so an
         # empty commit is a plain, retryable 422 and never a cached response.
-        if session.modality_document?
+        # Pending means nothing was ever stored. This arm is also what keeps
+        # pending out of the orchestrator, commit_estimate and metering, which
+        # all read modality as "document, else audio".
+        if session.modality_pending?
+          render_error(
+            code: "validation_error",
+            message: "Nothing was uploaded to this session",
+            status: :unprocessable_entity
+          )
+          return
+        elsif session.modality_document?
           unless session.document_files.attached?
             render_error(
               code: "document_upload_failed",
@@ -529,8 +560,26 @@ module Api
       # Renders a 409 and returns true when the session's modality does not
       # match the upload surface (audio uploads to a document session or vice
       # versa), so callers can guard with `return if reject_wrong_modality(...)`.
+      #
+      # A "pending" session is let through and claimed later, at the point the
+      # upload is actually stored — deciding here would let a refused upload fix
+      # the modality of a session that never received a byte.
       def reject_wrong_modality(session, expected)
+        return false if session.modality_pending?
         return false if session.modality == expected
+
+        render_error(
+          code: "validation_error",
+          message: "this endpoint requires a #{expected} session (modality is #{session.modality})",
+          status: :conflict
+        )
+        true
+      end
+
+      # Claims an undeclared session for this surface at the point of no return.
+      # 409s only when a concurrent first upload won the other surface.
+      def claim_modality_or_reject(session, expected)
+        return false if session.claim_modality(expected)
 
         render_error(
           code: "validation_error",
