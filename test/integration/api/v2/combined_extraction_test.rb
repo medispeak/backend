@@ -249,6 +249,47 @@ module Api
                      "the retry created a second transcript row"
       end
 
+      # Production, 2026-08-17: ocr_mode was set and every session still took
+      # the two-call path, with no signal anywhere as to why. The operator has
+      # to be able to find out.
+      test "skipping a configured combined run says which guard refused" do
+        assign_combined_ocr!
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
+        )
+        id = document_session(outputs: [ { type: "transcript" }, { type: "form", page_id: nil } ])
+
+        logged = capture_orchestrator_log do
+          post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+        end
+
+        assert_match(/combined extraction skipped for session=#{id}/, logged)
+        # The RIGHT reason: a transcript output costs no provider call, so
+        # "too many outputs" would be a misleading diagnosis for this shape.
+        assert_match(/transcript output was declared/, logged)
+        assert_no_match(/2 outputs declared/, logged)
+      end
+
+      test "a two-form session is refused for the cost reason, not the transcript one" do
+        assign_combined_ocr!
+        second = create(:page, template: @page.template)
+        create(:form_field, page: second, title: "wbc", friendly_name: "WBC", field_type: "string")
+        stub_request(:post, CHAT_URL).to_return(
+          status: 200, headers: { "Content-Type" => "application/json" },
+          body: { choices: [ { message: { content: { hemoglobin: "13.5" }.to_json }, finish_reason: "stop" } ],
+                  usage: { prompt_tokens: 900, completion_tokens: 100 } }.to_json
+        )
+        id = document_session(outputs: [ { type: "form", page_id: @page.id },
+                                         { type: "form", page_id: second.id } ])
+
+        logged = capture_orchestrator_log do
+          post "/api/v2/scribe_sessions/#{id}/commit", headers: @headers
+        end
+        assert_match(/2 outputs declared/, logged)
+      end
+
       # ── failure ──────────────────────────────────────────────────────────
 
       test "a failed combined call fails the session with a generic message" do
@@ -285,6 +326,16 @@ module Api
       end
 
       private
+
+      def capture_orchestrator_log
+        io = StringIO.new
+        previous = Rails.logger
+        Rails.logger = ActiveSupport::Logger.new(io)
+        yield
+        io.string
+      ensure
+        Rails.logger = previous
+      end
 
       def pdf_upload(pages: 1)
         file = Tempfile.new([ "report", ".pdf" ])
