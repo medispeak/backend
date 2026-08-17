@@ -224,36 +224,69 @@ module Scribe
       return false unless session.modality_document?
       return false unless ocr_config.ocr_mode == :extract_and_structure
 
-      outputs = session.scribe_outputs.to_a
-      # A transcript output IS the text — combining would make it permanently
-      # empty. More than one output would re-send the document per output,
-      # which costs MORE than one OCR feeding N cheap text calls.
-      # Form only. A transcript output IS the text, and a note output has its
-      # own field/prompt/result shape (see #process_note_output) that this path
-      # does not reproduce — it would return a form-shaped result.
-      return false unless outputs.one?
-      return false unless outputs.first.output_type == "form"
-      # Pages, not bytes: the guard the OCR path relies on (a truncated read) is
-      # unfireable here, because the response is ~150 tokens of JSON against a
-      # 4096 floor. A short report keeps a silently half-read document out of
-      # the realistic failure set.
-      return false if session.document_pages > MAX_COMBINED_PAGES
-      # The model must actually be able to return schema-valid JSON, and so must
-      # its fallback — ConfigResolver hands the fallback the primary's options,
-      # so it would otherwise inherit the mode without the capability.
-      structuring_capable?(ocr_config) &&
-        (ocr_config.fallback.nil? || structuring_capable?(ocr_config.fallback))
+      reason = combined_skip_reason
+      if reason
+        # The operator switched this on and is not getting it. Silence here is
+        # how a deliberate config comes to look broken, so say which guard
+        # refused and why.
+        Rails.logger.info(
+          "Scribe::Orchestrator combined extraction skipped for session=#{session.id}: #{reason}"
+        )
+        return false
+      end
+      true
     rescue StandardError => e
       # Resolving config must never be what fails a session.
       Rails.logger.warn("combined extraction check failed for session=#{session.id}: #{e.class}")
       false
     end
 
-    # Adapter-aware on purpose. The Anthropic adapter always forces a tool call,
-    # so can_structure is enough. The OpenAI-compatible adapter constrains the
-    # response ONLY via response_format when supports_json_schema is set — it
-    # sends no tools — so a model carrying just supports_function_calling would
-    # get no schema constraint at all and return free-form text.
+    # nil when the session is eligible, else why it is not — in the operator's
+    # terms, not the code's.
+    def combined_skip_reason
+      outputs = session.scribe_outputs.to_a
+
+      # A transcript output IS the extracted text, which this path never
+      # produces. Checked BEFORE the count: a transcript output costs no
+      # provider call (it echoes the persisted text), so "too many outputs"
+      # would be the wrong diagnosis for the common transcript+form session.
+      if outputs.any? { |o| o.output_type == "transcript" }
+        return "a transcript output was declared, and combined extraction emits no text — " \
+               "drop it to use combined extraction"
+      end
+
+      # Only outputs that actually cost a provider call count: re-sending the
+      # document per output is what makes combining more expensive, not echoes.
+      billable = outputs.reject { |o| o.output_type == "transcript" }
+      return "no output to fill" if billable.empty?
+
+      if billable.size > 1
+        return "#{billable.size} outputs declared — combining re-sends the document per output, " \
+               "which costs more than one extraction feeding them all"
+      end
+
+      unless billable.first.output_type == "form"
+        return "the output is a #{billable.first.output_type}, which has its own result shape; " \
+               "combined extraction fills form outputs only"
+      end
+
+      if session.document_pages > MAX_COMBINED_PAGES
+        return "#{session.document_pages} pages, over the #{MAX_COMBINED_PAGES}-page limit for combined extraction"
+      end
+
+      unless structuring_capable?(ocr_config)
+        return "#{ocr_config.api_model_id} is not marked able to return schema-valid JSON " \
+               "(needs can_structure, plus supports_json_schema unless it is an Anthropic model)"
+      end
+
+      if ocr_config.fallback && !structuring_capable?(ocr_config.fallback)
+        return "the fallback #{ocr_config.fallback.api_model_id} cannot return schema-valid JSON, " \
+               "and it would inherit this mode"
+      end
+
+      nil
+    end
+
     def structuring_capable?(config)
       return false unless config.capability?(:can_structure)
       return true if config.provider_kind == :anthropic
