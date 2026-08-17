@@ -14,6 +14,9 @@ module Scribe
   # its transport demands.
   class SessionBuilder
     OUTPUT_TYPES = %w[transcript form note].freeze
+    # What a caller may declare. Omitted (or anything else) starts "pending" and
+    # is fixed by the first upload the server stores.
+    CLIENT_MODALITIES = %w[audio document].freeze
 
     Result = Struct.new(:session, :error, keyword_init: true) do
       def success?
@@ -63,7 +66,9 @@ module Scribe
         api_token: api_token,
         user: user,
         status: "created",
-        modality: modality.presence || "pending",
+        # "pending" is server-managed; a client asking for it explicitly is
+        # asking for nothing, so it means the same as omitting it.
+        modality: CLIENT_MODALITIES.include?(modality.to_s) ? modality.to_s : "pending",
         language: language_hint,
         mode: mode.presence || "consultation",
         callback_url: callback_url,

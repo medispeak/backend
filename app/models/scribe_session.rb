@@ -77,8 +77,8 @@ class ScribeSession < ApplicationRecord
   # What kind of source this session ingests: recorded audio (ASR) or an
   # uploaded lab report / document (vision OCR). Prefixed predicates
   # (modality_audio? / modality_document?) keep the bare audio-ish names free.
-  # "pending" is a caller-omitted modality, awaiting the first upload to
-  # determine it (see #determine_modality!) - never set explicitly by a client.
+  # "pending" is server-managed (SessionBuilder::CLIENT_MODALITIES): a caller
+  # who declares nothing gets it, and #claim_modality fixes it on first upload.
   enum :modality, { pending: "pending", audio: "audio", document: "document" }, prefix: :modality
 
   validates :status, presence: true
@@ -88,20 +88,12 @@ class ScribeSession < ApplicationRecord
     expires_at.present? && expires_at < Time.current
   end
 
-  # Locks in the session's modality from whichever upload surface reaches it
-  # first, when the caller didn't declare one at creation (SessionBuilder
-  # defaults an omitted modality to "pending"). Returns whether the session is
-  # NOW `kind` — false means somebody else claimed the other modality and the
-  # caller must 409.
+  # Fixes an undeclared session's modality to the surface of its first stored
+  # upload. Returns false when a concurrent first upload claimed the other one.
   #
-  # The claim is a conditional UPDATE, not a read-check-write. One session
-  # token can drive all four upload surfaces at once, so `if modality_pending?`
-  # followed by a save lets two first uploads both pass the check and the
-  # second overwrite the first: the session then holds BOTH audio and documents
-  # while claiming to be one of them, the orchestrator transcribes only the
-  # winner's kind, and any segments already uploaded were metered on arrival
-  # for a transcript nobody will ever read. `WHERE modality = 'pending'` makes
-  # exactly one claimant win; the reload tells the loser it lost.
+  # Conditional UPDATE, not a read-check-write: one token can drive all four
+  # upload surfaces at once, and two claimants both passing `modality_pending?`
+  # would leave a session holding audio AND documents.
   def claim_modality(kind)
     return true if modality == kind.to_s
     return false unless modality_pending?

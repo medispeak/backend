@@ -312,15 +312,9 @@ module Api
           # lock, where the claim is serialized against commit's own UPDATE.
           if !session.created? && !session.uploading?
             too_late = true
-          # An undeclared session becomes a document one HERE, at the point of
-          # no return — every rejection that could still refuse this upload has
-          # either passed already or is one of the two below, so the modality is
-          # only ever decided by content we actually keep. Deciding earlier let
-          # a mistyped file, or one over a ceiling, strand a session in a kind
-          # its owner never chose and could not leave. Under the row lock the
-          # read-check-write is safe: a concurrent audio claim either committed
-          # before our lock (we see it and 409) or blocks on the lock and then
-          # matches zero rows against `modality = 'pending'`, so it loses.
+          # Claimed below, with the attach: the ceilings here must be able to
+          # refuse without deciding anything. Safe under the row lock — a racing
+          # audio claim either committed before it (we 409) or blocks and loses.
           elsif !session.modality_pending? && !session.modality_document?
             wrong_modality = true
           elsif attached_bytes_of(session, :document_files) + upload.size.to_i >
@@ -377,14 +371,9 @@ module Api
         # storage stream); document -> at least one uploaded document. This
         # guard sits BEFORE the atomic claim and OUTSIDE with_idempotency so an
         # empty commit is a plain, retryable 422 and never a cached response.
-        # A still-undeclared session is definitionally empty — the modality is
-        # claimed at the exact point an upload is stored, so "pending" means
-        # nothing was ever stored. Say that, rather than borrowing the audio
-        # wording for a session that may well have been meant as a document.
-        # This arm is also what keeps `pending` out of the rest of the
-        # pipeline: commit is the only door to the orchestrator, commit_estimate
-        # and the metering function, and every one of them reads modality as
-        # "document or else audio". Nothing downstream ever sees pending.
+        # Pending means nothing was ever stored. This arm is also what keeps
+        # pending out of the orchestrator, commit_estimate and metering, which
+        # all read modality as "document, else audio".
         if session.modality_pending?
           render_error(
             code: "validation_error",
@@ -572,16 +561,9 @@ module Api
       # match the upload surface (audio uploads to a document session or vice
       # versa), so callers can guard with `return if reject_wrong_modality(...)`.
       #
-      # A session created without a declared modality starts "pending" (see
-      # SessionBuilder) and is decided by whichever upload surface reaches it
-      # first — the modality a client never declares is exactly the modality of
-      # the first request it actually sends. An undecided session is therefore
-      # let through HERE and claimed later, by #claim_modality_or_reject, once
-      # the upload is known to be one we will actually store. Deciding at this
-      # point instead would let a refused upload — a .txt posted to /documents,
-      # a file over the size cap — permanently fix the modality of a session
-      # that never received a byte, so a typo would strand the session in a
-      # kind its owner never chose and cannot leave.
+      # A "pending" session is let through and claimed later, at the point the
+      # upload is actually stored — deciding here would let a refused upload fix
+      # the modality of a session that never received a byte.
       def reject_wrong_modality(session, expected)
         return false if session.modality_pending?
         return false if session.modality == expected
@@ -594,11 +576,8 @@ module Api
         true
       end
 
-      # Fixes an undeclared session's modality to this upload surface, and 409s
-      # if it cannot — which happens only when a concurrent first upload on the
-      # other surface won the race. Call this at the point of no return, once
-      # every rejection that could still refuse the upload has passed, so the
-      # modality is decided by content we actually keep.
+      # Claims an undeclared session for this surface at the point of no return.
+      # 409s only when a concurrent first upload won the other surface.
       def claim_modality_or_reject(session, expected)
         return false if session.claim_modality(expected)
 
