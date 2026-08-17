@@ -254,6 +254,65 @@ module Api
         assert_response :conflict
       end
 
+      # An upload the server REFUSES stores nothing, so it must not get to say
+      # what kind of session this is. Deciding at the guard instead of at the
+      # point of no return meant one mistyped file stranded the session in a
+      # modality its owner never chose and could not leave.
+      test "a refused upload leaves an undeclared session undecided" do
+        post "/api/v2/scribe_sessions", params: { outputs: [ { type: "transcript" } ] }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        session_id = JSON.parse(response.body)["id"]
+
+        file = Tempfile.new([ "notes", ".txt" ])
+        file.write("not a lab report")
+        file.rewind
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: Rack::Test::UploadedFile.new(file.path, "text/plain") }, headers: @headers
+        assert_response :unprocessable_entity
+        assert_equal 0, ScribeSession.find(session_id).document_files.count
+
+        assert_equal "pending", ScribeSession.find(session_id).modality,
+                     "a refused upload must not decide the session's modality"
+
+        # ...so the session is still free to become an audio one.
+        post "/api/v2/scribe_sessions/#{session_id}/audio",
+             params: { audio: audio_upload }, headers: @headers
+        assert_response :ok
+        assert_equal "audio", ScribeSession.find(session_id).modality
+      end
+
+      # The invariant the rest of the pipeline rests on: because the modality is
+      # claimed at the exact point an upload is stored, a still-pending session
+      # is definitionally empty and can never be committed — so the orchestrator,
+      # commit_estimate and the metering function (all of which read modality as
+      # "document, else audio") never see a pending session.
+      test "a session that was never uploaded to cannot be committed" do
+        post "/api/v2/scribe_sessions", params: { outputs: [ { type: "transcript" } ] }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        session_id = JSON.parse(response.body)["id"]
+
+        post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers
+
+        assert_response :unprocessable_entity
+        assert_match(/Nothing was uploaded/, JSON.parse(response.body).dig("error", "message"))
+        assert_equal "pending", ScribeSession.find(session_id).modality
+        assert_equal "created", ScribeSession.find(session_id).status
+        assert_equal 0, UsageEvent.where(scribe_session_id: session_id).count
+      end
+
+      # Same rule at the other rejection points: over the page cap, and over the
+      # per-file byte ceiling. Neither stores anything.
+      test "an upload rejected by a ceiling leaves an undeclared session undecided" do
+        post "/api/v2/scribe_sessions", params: { outputs: [ { type: "transcript" } ] }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        session_id = JSON.parse(response.body)["id"]
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: pdf_upload(pages: ScribeSession::MAX_DOCUMENT_PAGES + 1) }, headers: @headers
+        assert_response :unprocessable_entity
+        assert_equal "pending", ScribeSession.find(session_id).modality
+      end
+
       test "committing a document session with no documents is a 422" do
         session_id = create_document_session
         post "/api/v2/scribe_sessions/#{session_id}/commit", headers: @headers

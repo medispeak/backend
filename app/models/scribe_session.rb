@@ -90,11 +90,26 @@ class ScribeSession < ApplicationRecord
 
   # Locks in the session's modality from whichever upload surface reaches it
   # first, when the caller didn't declare one at creation (SessionBuilder
-  # defaults an omitted modality to "pending"). A no-op once the modality is
-  # already audio/document, so later uploads of the same kind are free and a
-  # cross-modality upload still 409s via reject_wrong_modality.
-  def determine_modality!(kind)
-    update!(modality: kind) if modality_pending?
+  # defaults an omitted modality to "pending"). Returns whether the session is
+  # NOW `kind` — false means somebody else claimed the other modality and the
+  # caller must 409.
+  #
+  # The claim is a conditional UPDATE, not a read-check-write. One session
+  # token can drive all four upload surfaces at once, so `if modality_pending?`
+  # followed by a save lets two first uploads both pass the check and the
+  # second overwrite the first: the session then holds BOTH audio and documents
+  # while claiming to be one of them, the orchestrator transcribes only the
+  # winner's kind, and any segments already uploaded were metered on arrival
+  # for a transcript nobody will ever read. `WHERE modality = 'pending'` makes
+  # exactly one claimant win; the reload tells the loser it lost.
+  def claim_modality(kind)
+    return true if modality == kind.to_s
+    return false unless modality_pending?
+
+    self.class.where(id: id, modality: "pending")
+        .update_all(modality: kind.to_s, updated_at: Time.current)
+    reload
+    modality == kind.to_s
   end
 
   # The growing transcript DURING recording: the done segments' texts, in seq
