@@ -50,7 +50,7 @@ module Scribe
 
       case field.field_type.to_s
       when "single_select"
-        schema[:enum] = Array(field.enum_options) + [ nil ] if present?(field.enum_options)
+        schema[:enum] = (Array(field.enum_options) + [ nil ]).uniq if present?(field.enum_options)
       when "multi_select"
         items = { type: "string" }
         items[:enum] = Array(field.enum_options) if present?(field.enum_options)

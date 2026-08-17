@@ -41,6 +41,12 @@ class SchemaBuilderTest < Minitest::Test
     assert_equal [ "low", "high", nil ], prop[:enum]
   end
 
+  def test_single_select_enum_dedupes_when_options_already_include_nil
+    schema = build([ Field.new(title: "sev", friendly_name: "Severity",
+                              field_type: "single_select", enum_options: [ "low", "high", nil ]) ])
+    assert_equal [ "low", "high", nil ], schema[:properties]["sev"][:enum]
+  end
+
   # The bug being fixed: multi_select must put enum on items, not the array.
   def test_multi_select_emits_items_enum_not_array_enum
     schema = build([ Field.new(title: "symptoms", friendly_name: "Symptoms",
