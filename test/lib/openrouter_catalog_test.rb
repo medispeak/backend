@@ -62,6 +62,26 @@ class OpenrouterCatalogTest < ActiveSupport::TestCase
     end
   end
 
+  # A model listed in both STRUCTURING_MODELS and OCR_MODELS is ONE AiModel row.
+  # The structuring loop creates it first, so the vision keys have to be merged
+  # in afterwards or the row silently serves only structuring.
+  test "a model in both catalogs ends up serving both functions" do
+    provider = OpenrouterCatalog.provision!
+    dual = OpenrouterCatalog::OCR_MODELS.keys & OpenrouterCatalog::STRUCTURING_MODELS.keys
+    assert dual.any?, "expected at least one model listed under both functions"
+
+    dual.each do |slug|
+      model = AiModel.find_by!(ai_provider: provider, api_model_id: slug)
+      assert model.capability?(:can_structure), slug
+      assert model.capability?(:supports_vision), slug
+      assert model.capability?(:supports_pdf), slug
+      assert_equal OpenrouterCatalog::OCR_MODELS[slug][:max_output_tokens],
+                   model.capabilities["max_output_tokens"], slug
+      # One price row, not one per catalog.
+      assert_equal 1, ModelPrice.where(provider: "OpenRouter", model: slug).count, slug
+    end
+  end
+
   test "assign_default_ocr! points the System default at the chosen model with a different-vendor fallback" do
     OpenrouterCatalog.provision!
     assignment = OpenrouterCatalog.assign_default_ocr!

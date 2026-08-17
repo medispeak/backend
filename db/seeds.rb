@@ -279,6 +279,10 @@ end
 # placeholder so the row shows in the UI.
 openrouter_provider = OpenrouterCatalog.provision!
 
+# OpenAI-direct models beyond the ones created inline below, from
+# lib/openai_catalog.rb (shared with the ProvisionLunaAndGeminiModels migration).
+OpenaiCatalog.provision!
+
 anthropic_provider = AiProvider.find_or_create_by!(name: "Anthropic") do |p|
   p.kind = "anthropic"
   p.base_url = "https://api.anthropic.com"

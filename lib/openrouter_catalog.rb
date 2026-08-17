@@ -47,7 +47,11 @@ module OpenrouterCatalog
     "google/gemini-3.1-flash-lite" => { display_name: "Gemini 3.1 Flash Lite (OpenRouter)", input_per_million: 0.25, output_per_million: 1.50 },
     "google/gemini-3.7-flash" => { display_name: "Gemini 3.7 Flash (OpenRouter)", input_per_million: 0.375, output_per_million: 1.875 },
     "nvidia/nemotron-3-super-120b-a12b" => { display_name: "Nemotron 3 Super 120B (OpenRouter)", input_per_million: 0.085, output_per_million: 0.40 },
-    "nvidia/nemotron-3.5-lightning" => { display_name: "Nemotron 3.5 Lightning (OpenRouter)", input_per_million: 0.10, output_per_million: 0.25 }
+    "nvidia/nemotron-3.5-lightning" => { display_name: "Nemotron 3.5 Lightning (OpenRouter)", input_per_million: 0.10, output_per_million: 0.25 },
+    # Also OCR models (see OCR_MODELS): one row serves both functions, and
+    # provision! merges the vision capabilities in after this loop creates it.
+    "openai/gpt-5.6-luna" => { display_name: "GPT-5.6 Luna (OpenRouter)", input_per_million: 0.10, output_per_million: 0.60 },
+    "google/gemini-3.6-flash" => { display_name: "Gemini 3.6 Flash (OpenRouter)", input_per_million: 0.75, output_per_million: 3.75 }
   }.freeze
 
   # Vision models for the document (OCR) modality.
@@ -100,6 +104,15 @@ module OpenrouterCatalog
     "anthropic/claude-haiku-4.5" => {
       display_name: "Claude Haiku 4.5 (OpenRouter)",
       input_per_million: 1.00, output_per_million: 5.00, max_output_tokens: 64_000
+    },
+    # Also in STRUCTURING_MODELS — one AiModel row serves both functions.
+    "openai/gpt-5.6-luna" => {
+      display_name: "GPT-5.6 Luna (OpenRouter)",
+      input_per_million: 0.10, output_per_million: 0.60, max_output_tokens: 128_000
+    },
+    "google/gemini-3.6-flash" => {
+      display_name: "Gemini 3.6 Flash (OpenRouter)",
+      input_per_million: 0.75, output_per_million: 3.75, max_output_tokens: 65_536
     }
   }.freeze
 
