@@ -14,6 +14,8 @@ module Llm
       raise NotImplementedError, "#{self.class} must implement #transcribe"
     end
 
+    # documents: structure straight from the source file rather than from
+    # already-extracted text. Adapters that cannot see may ignore it.
     def structure(*)
       raise NotImplementedError, "#{self.class} must implement #structure"
     end

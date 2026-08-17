@@ -23,7 +23,11 @@ module Scribe
       @system_prompt = system_prompt
     end
 
-    def call(transcript_text)
+    # `documents` structures directly from the source file — one vision call
+    # instead of OCR-then-structure. The repair re-ask deliberately does NOT
+    # re-send them: the previous JSON and the validation errors are already in
+    # the repair prompt, so paying to re-read the document buys nothing.
+    def call(transcript_text, documents: nil, max_tokens: nil)
       # Timed over the whole stage rather than taken from llm.latency_ms: a
       # failed validation triggers a repair re-ask, which is a SECOND provider
       # round-trip, and the first call's latency would silently undercount the
@@ -32,7 +36,11 @@ module Scribe
       repaired = false
 
       model_schema = builder.call
-      llm = Llm::Caller.structure(@config, messages: messages(transcript_text), schema: model_schema)
+      llm = Llm::Caller.structure(
+        @config,
+        messages: messages(transcript_text), schema: model_schema,
+        documents: documents, max_tokens: max_tokens
+      )
       guard_completion!(llm)
 
       data, errors = validator.validate_and_repair(llm.structured) do |errs|

@@ -28,11 +28,21 @@ module Llm
         raise Llm::BadResponse, "Anthropic does not support audio transcription"
       end
 
-      def structure(messages:, schema:, **_opts)
+      # `documents` structures straight from the source file instead of from
+      # already-extracted text (Llm::Config#ocr_mode :extract_and_structure).
+      def structure(messages:, schema:, documents: nil, max_tokens: nil, **_opts)
         started = monotonic
 
-        response = client.post("/v1/messages", request_body(messages, schema))
+        response = client.post("/v1/messages", request_body(messages, schema, documents, max_tokens))
         resp = response.body
+        # With documents attached this is the same completeness rule the OCR
+        # path uses, so a truncation raises INSIDE the attempt (where Caller can
+        # spend the fallback) and a refusal becomes Llm::Refused. tool_use is a
+        # valid terminal stop reason for a forced-tool call.
+        if documents.present? && resp["stop_reason"].to_s != "tool_use"
+          guard_ocr_completion!(resp["stop_reason"], usage: usage_from(resp["usage"]),
+                                                     latency_ms: elapsed_ms(started))
+        end
         structured = extract_tool_input(resp)
 
         Llm::Result.new(
@@ -122,12 +132,12 @@ module Llm
         text
       end
 
-      def request_body(messages, schema)
+      def request_body(messages, schema, documents = nil, max_tokens = nil)
         {
           model: config.api_model_id,
-          max_tokens: config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
+          max_tokens: clamp_ocr_budget(max_tokens) || config.options[:max_tokens] || DEFAULT_MAX_TOKENS,
           system: system_prompt(messages),
-          messages: chat_messages(messages),
+          messages: with_documents(chat_messages(messages), documents),
           tools: [
             {
               name: TOOL_NAME,
@@ -144,6 +154,22 @@ module Llm
       def system_prompt(messages)
         msg = messages.find { |m| role_of(m).to_s == "system" }
         msg && content_of(msg)
+      end
+
+      # Prepends the source documents to the first user turn, so the model reads
+      # the file and fills the schema in one call.
+      def with_documents(messages, documents)
+        return messages if documents.blank?
+
+        blocks = documents.map { |doc| document_block(doc) }
+        first_user = messages.index { |m| m[:role].to_s == "user" }
+        return messages unless first_user
+
+        messages.each_with_index.map do |message, i|
+          next message unless i == first_user
+
+          { role: "user", content: blocks + [ { type: "text", text: message[:content].to_s } ] }
+        end
       end
 
       def chat_messages(messages)

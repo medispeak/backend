@@ -30,7 +30,10 @@ class ModelAssignmentDashboard < Administrate::BaseDashboard
     # NEVER Field::Text here — it persists the textarea as a JSON *string* and
     # takes down every resolver call (2026-08-16 incident).
     options: Field::JsonObject.with_options(
-      hint: 'JSON object of resolver options, e.g. {} or {"asr_mode": "translate"}'
+      hint: 'JSON object of resolver options, e.g. {} or {"asr_mode": "translate"}. ' \
+            'On an OCR assignment, {"ocr_mode": "extract_and_structure"} fills the form in ONE ' \
+            "vision call and emits no transcript text (~3x cheaper; applies only to a " \
+            "single-output session of 2 pages or fewer on a structuring-capable model)."
     ),
     created_at: Field::DateTime,
     updated_at: Field::DateTime
