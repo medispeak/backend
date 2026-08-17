@@ -11,11 +11,13 @@ module Scribe
     end
 
     def valid?(data)
-      @schemer.valid?(normalize(data))
+      errors(data).empty?
     end
 
     def errors(data)
-      @schemer.validate(normalize(data)).map { |e| format_error(e) }
+      normalized = normalize(data)
+      @schemer.validate(normalized).map { |e| format_error(e) } +
+        malformed_json_string_errors(normalized)
     end
 
     # Returns [data, []] when valid. When invalid and a block is given, calls the
@@ -40,6 +42,54 @@ module Scribe
       }
     end
 
+    # Callers embed nested structured sub-data (medication, diagnosis, …) as a
+    # JSON-encoded string inside an otherwise plain "string" field — a shape
+    # the JSON Schema itself can't constrain. A reasoning model occasionally
+    # leaks scratchpad text after (or instead of) the real JSON there, which
+    # is schema-valid (still a string) but unusable. Treat a value that looks
+    # like JSON but doesn't fully parse as a validation failure so it goes
+    # through the same bounded repair re-ask as any other error.
+    def malformed_json_string_errors(data)
+      return [] unless data.is_a?(Hash)
+
+      data.each_with_object([]) do |(key, value), errs|
+        next unless value.is_a?(String)
+
+        trimmed = value.strip
+        next unless looks_like_json_payload?(trimmed)
+
+        begin
+          JSON.parse(trimmed)
+        rescue JSON::ParserError
+          pointer = "/#{escape_pointer_token(key)}"
+          errs << {
+            pointer: pointer,
+            type: "malformed_json_string",
+            # Spelled out for the repair re-ask, which only ever sees these
+            # messages: name both failure modes so the model knows what to do.
+            message: "value at `#{pointer}` is a JSON payload that does not " \
+                     "parse (truncated or over-escaped); re-send it complete " \
+                     "and escaped exactly once"
+          }
+        end
+      end
+    end
+
+    # Field titles are free text and really do contain "/" ("Procedure /
+    # Surgery Planned"), so hand-built pointers need the same RFC 6901 escaping
+    # json_schemer applies — otherwise the two error sources disagree about how
+    # to name the same field. "~" first, or it would double-escape the "~1".
+    def escape_pointer_token(key)
+      key.to_s.gsub("~", "~0").gsub("/", "~1")
+    end
+
+    # A leading [ or { alone also matches plain-text answers like
+    # "[not mentioned]" or "{pending}" — require an actual "key": shape too,
+    # so only a real (but broken) object/array payload is flagged.
+    def looks_like_json_payload?(text)
+      text.start_with?("[", "{") && text.include?('":')
+    end
+
     def deep_stringify(obj)
       case obj
       when Hash  then obj.each_with_object({}) { |(k, v), h| h[k.to_s] = deep_stringify(v) }
@@ -51,7 +101,21 @@ module Scribe
     # Round-trip through JSON so symbol-keyed Ruby hashes become string-keyed,
     # which is what JSON Schema validation expects.
     def normalize(data)
-      JSON.parse(data.is_a?(String) ? data : JSON.generate(data))
+      drop_nulls(JSON.parse(data.is_a?(String) ? data : JSON.generate(data)))
+    end
+
+    # Every field is optional (SchemaBuilder emits `required: []`), but OpenAI
+    # strict mode cannot express that — the adapter has to mark every key
+    # required and nullable, so the model spells "not mentioned in the
+    # transcript" as an explicit null. Validating those against the core
+    # schema's non-nullable "string"/"number" made the validator reject the
+    # exact shape we asked the model for: it accounted for essentially every
+    # structuring error in production, and each one burned a repair re-ask that
+    # could only ever come back null again. Treat null as absent instead.
+    def drop_nulls(data)
+      return data unless data.is_a?(Hash)
+
+      data.reject { |_, value| value.nil? }
     end
   end
 end
