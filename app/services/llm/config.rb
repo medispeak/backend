@@ -53,5 +53,22 @@ module Llm
     def asr_mode
       (@options[:asr_mode] || @options["asr_mode"]).to_s == "translate" ? :translate : :transcribe
     end
+
+    # How a document session spends its OCR call:
+    #   :extract (default)            — read the document to text, then structure
+    #                                   from that text. Two calls; the extracted
+    #                                   text is persisted as the Transcript.
+    #   :extract_and_structure        — one vision call straight to the form
+    #                                   fields. No text is emitted, so there is
+    #                                   no audit trail — and that is the saving:
+    #                                   output tokens cost ~6x input, and the
+    #                                   text is the bulk of them.
+    # Set options["ocr_mode"] on the OCR ModelAssignment. The orchestrator gates
+    # it further (single output, few pages, capable model); anything absent or
+    # unknown falls back to :extract.
+    def ocr_mode
+      value = (@options[:ocr_mode] || @options["ocr_mode"]).to_s
+      value == "extract_and_structure" ? :extract_and_structure : :extract
+    end
   end
 end

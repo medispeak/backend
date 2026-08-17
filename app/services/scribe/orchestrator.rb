@@ -28,11 +28,20 @@ module Scribe
 
     NOTE_KEY = "note".freeze
 
+    # Combined extraction is for a short report — see #combined_extraction?.
+    MAX_COMBINED_PAGES = 2
+    # The "transcript" a combined run structures from: there is none, so say so
+    # rather than sending an empty string, which reads as "the document was
+    # blank" to a model that is also being handed the document itself.
+    COMBINED_PROMPT = "Read the attached document and fill the fields from it.".freeze
+
     def initialize(scribe_session)
       @session = scribe_session
     end
 
     def call
+      return call_combined if combined_extraction?
+
       transcript = ensure_transcript!
       return @session if transcript.nil? && transcript_failed?
 
@@ -201,21 +210,183 @@ module Scribe
     # text as the Transcript, and meters the attempt as function: :ocr
     # (dedupe "{session}:ocr"). Structuring then consumes the transcript text
     # exactly as it does for audio.
-    def transcript_from_documents!
-      config = Llm::ConfigResolver.call(function: :ocr, account: session.account)
+    # One vision call straight to the form fields, instead of OCR-then-structure.
+    #
+    # Cheaper because it never emits the extracted text: output tokens cost ~6x
+    # input and the text is the bulk of them, so this is ~3x on a one-page
+    # report. The text is exactly what it gives up, which is why every gate
+    # below is about making sure nobody is relying on it.
+    #
+    # Fails CLOSED to the two-call path — never a 4xx. The mode is an operator's
+    # server-side assignment that can change between create and commit, so
+    # refusing would blame the client for a decision they did not make.
+    def combined_extraction?
+      return false unless session.modality_document?
+      return false unless ocr_config.ocr_mode == :extract_and_structure
 
-      # Sorted by attachment id, which is upload order, which is the order the
-      # client intended the report to read in. The association carries no ORDER
-      # BY of its own, so page 3 of a split report could otherwise be transcribed
-      # ahead of page 1 and the extracted text would interleave silently.
-      documents = session.document_files.attachments.sort_by(&:id).map do |file|
-        {
-          data: file.blob.download,
-          content_type: file.blob.content_type,
-          filename: file.blob.filename.to_s
-        }
+      outputs = session.scribe_outputs.to_a
+      # A transcript output IS the text — combining would make it permanently
+      # empty. More than one output would re-send the document per output,
+      # which costs MORE than one OCR feeding N cheap text calls.
+      # Form only. A transcript output IS the text, and a note output has its
+      # own field/prompt/result shape (see #process_note_output) that this path
+      # does not reproduce — it would return a form-shaped result.
+      return false unless outputs.one?
+      return false unless outputs.first.output_type == "form"
+      # Pages, not bytes: the guard the OCR path relies on (a truncated read) is
+      # unfireable here, because the response is ~150 tokens of JSON against a
+      # 4096 floor. A short report keeps a silently half-read document out of
+      # the realistic failure set.
+      return false if session.document_pages > MAX_COMBINED_PAGES
+      # The model must actually be able to return schema-valid JSON, and so must
+      # its fallback — ConfigResolver hands the fallback the primary's options,
+      # so it would otherwise inherit the mode without the capability.
+      structuring_capable?(ocr_config) &&
+        (ocr_config.fallback.nil? || structuring_capable?(ocr_config.fallback))
+    rescue StandardError => e
+      # Resolving config must never be what fails a session.
+      Rails.logger.warn("combined extraction check failed for session=#{session.id}: #{e.class}")
+      false
+    end
+
+    # Adapter-aware on purpose. The Anthropic adapter always forces a tool call,
+    # so can_structure is enough. The OpenAI-compatible adapter constrains the
+    # response ONLY via response_format when supports_json_schema is set — it
+    # sends no tools — so a model carrying just supports_function_calling would
+    # get no schema constraint at all and return free-form text.
+    def structuring_capable?(config)
+      return false unless config.capability?(:can_structure)
+      return true if config.provider_kind == :anthropic
+
+      config.capability?(:supports_json_schema)
+    end
+
+    # Runs the single output through one vision call. Mirrors #call's per-output
+    # isolation, metering and rollup so nothing downstream can tell the
+    # difference except that the transcript carries no text.
+    def call_combined
+      output = session.scribe_outputs.first
+      unless output.status_success?
+        stage = process_combined_output(output)
+        meter_combined(stage) if stage
       end
-      raise Llm::Error, "no documents attached to scribe session" if documents.empty?
+      finalize_session_status!
+      session
+    end
+
+    def process_combined_output(output)
+      stage = combined_stage_for(output)
+      output.result = stage.structured
+      # :partial, not :failure, and result_errors only when there are some —
+      # the column is NOT NULL. Same shape as the split path's form output, so
+      # the rollup and the UI cannot tell which path produced it.
+      if stage.valid
+        output.status = :success
+      else
+        output.status = :partial
+        output.result_errors = stage.errors
+      end
+      output.save!
+      # A stub Transcript keeps `session.transcript.present?` meaning "this
+      # session has been extracted", which is the re-commit short-circuit and
+      # the admin/UI signal. text is nil because none was ever emitted; the UI
+      # already has an honest branch for that.
+      persist_stub_transcript!(stage)
+      stage
+    rescue Llm::Error => e
+      meter_failed_attempt(e)
+      mark_transcript_failure!(e, client_message_for(e))
+      @transcript_failed = true
+      nil
+    rescue StandardError => e
+      mark_transcript_failure!(e, client_message_for(e))
+      @transcript_failed = true
+      nil
+    end
+
+    def combined_stage_for(output)
+      if output.inline_fields.present?
+        fields = Scribe::InlineField.build_all(output.inline_fields)
+        system_prompt = nil
+      else
+        fields = output.page.form_fields.to_a
+        system_prompt = output.page.prompt
+      end
+
+      Scribe::StructuringStage.new(
+        config: ocr_config, fields: fields,
+        context: output.context, system_prompt: system_prompt
+      ).call(COMBINED_PROMPT, documents: documents!)
+    end
+
+    # Idempotent: a :partial output is retried on re-commit and lands here
+    # again, and Transcript is a has_one — a second create would either violate
+    # the constraint or leave two rows.
+    def persist_stub_transcript!(stage)
+      session.reload.transcript || Transcript.create!(
+        scribe_session: session, text: nil, language: session.language,
+        provider: stage.provider, model: stage.model
+      )
+    end
+
+    # One UsageEvent, function :ocr — the call IS the OCR call, and keying it
+    # :ocr keeps ocr_attempt_number, the per-page price component and the
+    # existing ledger semantics intact. Keyed explicitly rather than through
+    # dedupe_key_for's per-output branch, which carries no attempt counter.
+    # Keyed with no scribe_output, so dedupe_key_for yields the per-attempt
+    # "{session}:ocr:{n}" form rather than the output-keyed one, which carries
+    # no attempt counter.
+    def meter_combined(stage)
+      meter(function: :ocr, stage: stage, usage: usage_with_pages(stage.usage))
+    end
+
+    def usage_with_pages(usage)
+      return usage unless usage
+
+      Llm::Usage.new(
+        input_tokens: usage.input_tokens, output_tokens: usage.output_tokens,
+        audio_seconds: usage.audio_seconds, pages: session.document_pages,
+        estimated: usage.estimated
+      )
+    end
+
+    # Sorted by attachment id, which is upload order, which is the order the
+    # client intended the report to read in. The association carries no ORDER BY
+    # of its own, so page 3 of a split report could otherwise be read ahead of
+    # page 1 and the text would interleave silently.
+    def documents!
+      @documents ||= begin
+        docs = session.document_files.attachments.sort_by(&:id).map do |file|
+          {
+            data: file.blob.download,
+            content_type: file.blob.content_type,
+            filename: file.blob.filename.to_s
+          }
+        end
+        raise Llm::Error, "no documents attached to scribe session" if docs.empty?
+
+        docs
+      end
+    end
+
+    def ocr_config
+      @ocr_config ||= Llm::ConfigResolver.call(
+        function: :ocr, page: shared_page, account: session.account
+      )
+    end
+
+    # The page every output shares, when they share one — so an OCR assignment
+    # made at Page or Template scope is actually reachable. nil (today's
+    # behaviour) when the outputs span pages and no single scope applies.
+    def shared_page
+      pages = session.scribe_outputs.map(&:page).uniq
+      pages.size == 1 ? pages.first : nil
+    end
+
+    def transcript_from_documents!
+      config = ocr_config
+
+      documents = documents!
 
       stage = Scribe::OcrStage.new(config: config).call(
         documents, pages: session.document_pages
@@ -437,8 +608,8 @@ module Scribe
     # output or fail the session. A usage_event left :pending by such a failure
     # is swept to :failed by Metering::ReservationSweeper; holds are postpaid, so
     # no credit balance is returned.
-    def meter(function:, stage:, scribe_output: nil)
-      record_and_deduct(function: function, stage: stage, scribe_output: scribe_output)
+    def meter(function:, stage:, scribe_output: nil, usage: nil)
+      record_and_deduct(function: function, stage: stage, scribe_output: scribe_output, usage: usage)
     rescue StandardError => e
       Rails.logger.error(
         "Scribe::Orchestrator metering failed for session=#{session.id} " \
@@ -454,11 +625,11 @@ module Scribe
     # NOT respond to #latency_ms, but Metering::UsageRecorder consumes the
     # Llm::Result contract (usage / provider / model / latency_ms). Wrap the
     # stage struct into an Llm::Result so the meter sees the shape it expects.
-    def record_and_deduct(function:, stage:, scribe_output: nil)
+    def record_and_deduct(function:, stage:, scribe_output: nil, usage: nil)
       event = Metering::UsageRecorder.record(
         account: session.account,
         function: function,
-        result: as_llm_result(stage),
+        result: as_llm_result(stage, usage: usage),
         api_token: session.api_token,
         scribe_session: session,
         scribe_output: scribe_output,
@@ -512,13 +683,15 @@ module Scribe
     # The stage structs carry latency_ms (ASR/OCR from the adapter, structuring
     # timed across the whole stage so a repair re-ask is counted), so it reaches
     # usage_events; the respond_to? guard remains for any struct that does not.
-    def as_llm_result(stage)
+    # `usage` overrides the stage's own — a combined run grafts the page count
+    # on, which only OcrStage does for itself.
+    def as_llm_result(stage, usage: nil)
       Llm::Result.new(
         text: stage.respond_to?(:text) ? stage.text : nil,
         structured: stage.respond_to?(:structured) ? stage.structured : nil,
         model: stage.model,
         provider: stage.provider,
-        usage: stage.usage,
+        usage: usage || stage.usage,
         latency_ms: stage.respond_to?(:latency_ms) ? stage.latency_ms : nil,
         finish_reason: stage.respond_to?(:finish_reason) ? stage.finish_reason : nil,
         raw: stage.respond_to?(:raw) ? stage.raw : nil

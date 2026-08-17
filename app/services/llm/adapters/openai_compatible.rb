@@ -34,10 +34,13 @@ module Llm
         raise map_transport_error(e)
       end
 
-      def structure(messages:, schema:, **_opts)
+      # `documents` structures straight from the source file instead of from
+      # already-extracted text (Llm::Config#ocr_mode :extract_and_structure).
+      def structure(messages:, schema:, documents: nil, max_tokens: nil, **_opts)
         started = monotonic
-        params = { model: config.api_model_id, messages: messages }
+        params = { model: config.api_model_id, messages: with_documents(messages, documents) }
         params[:response_format] = json_schema_format(schema) if config.capability?(:supports_json_schema)
+        params[output_budget_param] = clamp_ocr_budget(max_tokens) if max_tokens
 
         response = client.chat(parameters: params)
         choice = response.dig("choices", 0) || {}
@@ -46,8 +49,13 @@ module Llm
 
         # A 200 that stopped early (e.g. "length") carries truncated content;
         # don't trust it. Surface as a transient BadResponse so Caller falls back
-        # — mirrors the Anthropic adapter's missing-tool-block handling.
-        if finish_reason && !%w[stop].include?(finish_reason.to_s)
+        # — mirrors the Anthropic adapter's missing-tool-block handling. With
+        # documents attached this is the same guard the OCR path uses, so a
+        # refusal is Llm::Refused and is not retried on the fallback.
+        if documents.present?
+          guard_ocr_completion!(finish_reason, usage: usage_from(response["usage"]),
+                                               latency_ms: elapsed_ms(started))
+        elsif finish_reason && !%w[stop].include?(finish_reason.to_s)
           raise Llm::BadResponse, "model did not complete (finish_reason=#{finish_reason})"
         end
 
@@ -133,6 +141,23 @@ module Llm
           nil
         end
         host == OPENAI_HOST ? :max_completion_tokens : :max_tokens
+      end
+
+      # Prepends the source documents to the first user turn, so the model reads
+      # the file and fills the schema in one call.
+      def with_documents(messages, documents)
+        return messages if documents.blank?
+
+        parts = documents.map { |doc| document_part(doc) }
+        first_user = messages.index { |m| (m[:role] || m["role"]).to_s == "user" }
+        return messages unless first_user
+
+        messages.each_with_index.map do |message, i|
+          next message unless i == first_user
+
+          text = message[:content] || message["content"]
+          { role: "user", content: parts + [ { type: "text", text: text.to_s } ] }
+        end
       end
 
       def document_part(doc)
