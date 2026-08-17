@@ -38,6 +38,37 @@ module Admin
       assert_response :success
     end
 
+    # Configuring an assignment means finding the models that can serve one
+    # function. Typed into the search box as `ocr:` / `asr:` / `structuring:`.
+    test "ai_models index filters by the function a model can serve" do
+      asr = create(:ai_model, ai_provider: @provider, display_name: "Whispery",
+                              capabilities: { "accepts_audio" => true, "can_transcribe" => true })
+      vision = create(:ai_model, ai_provider: @provider, display_name: "Seer",
+                                 capabilities: { "supports_vision" => true })
+
+      get admin_ai_models_path(search: "ocr:")
+      assert_response :success
+      assert_includes response.body, "Seer"
+      assert_not_includes response.body, "Whispery"
+
+      get admin_ai_models_path(search: "asr:")
+      assert_response :success
+      assert_includes response.body, "Whispery"
+      assert_not_includes response.body, "Seer"
+    end
+
+    test "ai_models index names the functions each model can serve, readably" do
+      create(:ai_model, ai_provider: @provider, display_name: "Dual",
+                        capabilities: { "can_structure" => true, "supports_vision" => true })
+
+      get admin_ai_models_path
+      assert_response :success
+      # The cell itself, not just the words appearing somewhere on the page —
+      # and not a raw Ruby array, which is what Field::String renders for one.
+      assert_includes response.body.gsub(/\s+/, " "), "structuring, ocr"
+      assert_not_includes response.body, "[&quot;structuring&quot;"
+    end
+
     test "model_assignments index renders" do
       get admin_model_assignments_path
       assert_response :success

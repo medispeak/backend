@@ -20,6 +20,10 @@ class AiModelDashboard < Administrate::BaseDashboard
     capabilities: Field::JsonObject.with_options(
       hint: 'JSON object of booleans, e.g. {"accepts_audio": true, "can_transcribe": true}'
     ),
+    # Which assignment functions this model can serve, derived from its
+    # capabilities — so the list answers "what can I use this for?" without
+    # opening each row and reading the JSON.
+    functions_label: Field::String.with_options(searchable: false, label: "Functions"),
     active: Field::Boolean,
     created_at: Field::DateTime,
     updated_at: Field::DateTime
@@ -34,6 +38,7 @@ class AiModelDashboard < Administrate::BaseDashboard
     display_name
     ai_provider
     api_model_id
+    functions_label
     active
   ].freeze
 
@@ -44,6 +49,7 @@ class AiModelDashboard < Administrate::BaseDashboard
     ai_provider
     api_model_id
     display_name
+    functions_label
     capabilities
     active
     created_at
@@ -64,8 +70,14 @@ class AiModelDashboard < Administrate::BaseDashboard
   # COLLECTION_FILTERS
   # a hash that defines filters that can be used while searching via the search
   # field of the dashboard.
+  # Typed into the search box as `asr:`, `ocr:`, `structuring:`. Configuring an
+  # assignment means finding the models that can serve one function, and the
+  # capabilities that decide it were only readable by opening each row.
   COLLECTION_FILTERS = {
-    active: ->(resources) { resources.where(active: true) }
+    active: ->(resources) { resources.where(active: true) },
+    asr: ->(resources) { resources.for_function("asr") },
+    structuring: ->(resources) { resources.for_function("structuring") },
+    ocr: ->(resources) { resources.for_function("ocr") }
   }.freeze
 
   # Overwrite this method to customize how ai models are displayed
