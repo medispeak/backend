@@ -228,11 +228,29 @@ module Api
              params: { audio: audio_upload }, headers: @headers
         assert_response :conflict
 
-        post "/api/v2/scribe_sessions", params: { outputs: [ { type: "transcript" } ] }.to_json,
+        post "/api/v2/scribe_sessions",
+             params: { modality: "audio", outputs: [ { type: "transcript" } ] }.to_json,
              headers: @headers.merge("Content-Type" => "application/json")
         audio_session = JSON.parse(response.body)["id"]
         post "/api/v2/scribe_sessions/#{audio_session}/documents",
              params: { document: image_upload }, headers: @headers
+        assert_response :conflict
+      end
+
+      test "a session with no declared modality is determined by whichever upload reaches it first" do
+        post "/api/v2/scribe_sessions", params: { outputs: [ { type: "transcript" } ] }.to_json,
+             headers: @headers.merge("Content-Type" => "application/json")
+        session_id = JSON.parse(response.body)["id"]
+        assert_equal "pending", ScribeSession.find(session_id).modality
+
+        post "/api/v2/scribe_sessions/#{session_id}/documents",
+             params: { document: image_upload }, headers: @headers
+        assert_response :ok
+        assert_equal "document", ScribeSession.find(session_id).modality
+
+        # Locked in now - a second, different-surface upload still 409s.
+        post "/api/v2/scribe_sessions/#{session_id}/audio",
+             params: { audio: audio_upload }, headers: @headers
         assert_response :conflict
       end
 

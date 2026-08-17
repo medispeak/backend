@@ -63,7 +63,7 @@ module Scribe
         api_token: api_token,
         user: user,
         status: "created",
-        modality: modality.presence || "audio",
+        modality: modality.presence || "pending",
         language: language_hint,
         mode: mode.presence || "consultation",
         callback_url: callback_url,

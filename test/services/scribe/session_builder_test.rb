@@ -25,7 +25,7 @@ module Scribe
       assert result.success?
       assert_equal @account, result.session.account
       assert_equal "created", result.session.status
-      assert_equal "audio", result.session.modality
+      assert_equal "pending", result.session.modality
       assert_equal "consultation", result.session.mode
       assert_equal 3, result.session.scribe_outputs.count
       assert_equal %w[transcript form form], result.session.scribe_outputs.order(:id).map(&:output_type)

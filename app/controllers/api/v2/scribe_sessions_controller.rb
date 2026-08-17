@@ -529,7 +529,13 @@ module Api
       # Renders a 409 and returns true when the session's modality does not
       # match the upload surface (audio uploads to a document session or vice
       # versa), so callers can guard with `return if reject_wrong_modality(...)`.
+      #
+      # A session created without a declared modality starts "pending" (see
+      # SessionBuilder) and is determined by whichever upload surface reaches
+      # it first - the modality a client never declares is exactly the
+      # modality of the first request it actually sends.
       def reject_wrong_modality(session, expected)
+        session.determine_modality!(expected)
         return false if session.modality == expected
 
         render_error(
