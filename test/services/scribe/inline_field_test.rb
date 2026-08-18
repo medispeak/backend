@@ -14,8 +14,8 @@ class Scribe::InlineFieldTest < ActiveSupport::TestCase
       { "key" => "sx", "label" => "Symptoms", "type" => "multi_select", "enum" => %w[fever cough] }
     ])
     schema = Scribe::SchemaBuilder.new(fields: fields).call
-    assert_equal "number", schema[:properties]["hr"][:type]
-    assert_equal "array", schema[:properties]["sx"][:type]
+    assert_equal [ "number", "null" ], schema[:properties]["hr"][:type]
+    assert_equal [ "array", "null" ], schema[:properties]["sx"][:type]
     assert_equal %w[fever cough], schema[:properties]["sx"][:items][:enum]
   end
 

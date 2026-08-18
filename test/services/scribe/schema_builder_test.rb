@@ -1,6 +1,7 @@
 # Standalone unit tests for Scribe::SchemaBuilder.
 # Runnable without Rails/DB: `ruby -Itest test/services/scribe/schema_builder_test.rb`
 require "minitest/autorun"
+require "json_schemer"
 
 # Standalone mode loads the file directly; under `bin/rails test` Zeitwerk
 # autoloads Scribe::SchemaBuilder, so skip the manual load.
@@ -20,7 +21,7 @@ class SchemaBuilderTest < Minitest::Test
   def test_string_field
     schema = build([ Field.new(title: "name", friendly_name: "Name", field_type: "string") ])
     prop = schema[:properties]["name"]
-    assert_equal "string", prop[:type]
+    assert_equal [ "string", "null" ], prop[:type]
     assert_equal "Name", prop[:description]
   end
 
@@ -29,16 +30,22 @@ class SchemaBuilderTest < Minitest::Test
       Field.new(title: "smoker", friendly_name: "Smoker", field_type: "boolean"),
       Field.new(title: "age", friendly_name: "Age", field_type: "number")
     ])
-    assert_equal "boolean", schema[:properties]["smoker"][:type]
-    assert_equal "number", schema[:properties]["age"][:type]
+    assert_equal [ "boolean", "null" ], schema[:properties]["smoker"][:type]
+    assert_equal [ "number", "null" ], schema[:properties]["age"][:type]
   end
 
   def test_single_select_emits_enum_on_string
     schema = build([ Field.new(title: "sev", friendly_name: "Severity",
                               field_type: "single_select", enum_options: %w[low high]) ])
     prop = schema[:properties]["sev"]
-    assert_equal "string", prop[:type]
-    assert_equal %w[low high], prop[:enum]
+    assert_equal [ "string", "null" ], prop[:type]
+    assert_equal [ "low", "high", nil ], prop[:enum]
+  end
+
+  def test_single_select_enum_dedupes_when_options_already_include_nil
+    schema = build([ Field.new(title: "sev", friendly_name: "Severity",
+                              field_type: "single_select", enum_options: [ "low", "high", nil ]) ])
+    assert_equal [ "low", "high", nil ], schema[:properties]["sev"][:enum]
   end
 
   # The bug being fixed: multi_select must put enum on items, not the array.
@@ -46,7 +53,7 @@ class SchemaBuilderTest < Minitest::Test
     schema = build([ Field.new(title: "symptoms", friendly_name: "Symptoms",
                               field_type: "multi_select", enum_options: %w[cough fever]) ])
     prop = schema[:properties]["symptoms"]
-    assert_equal "array", prop[:type]
+    assert_equal [ "array", "null" ], prop[:type]
     assert_nil prop[:enum], "enum must NOT be on the array itself"
     assert_equal({ type: "string", enum: %w[cough fever] }, prop[:items])
   end
@@ -71,6 +78,29 @@ class SchemaBuilderTest < Minitest::Test
     schema = build([ Field.new(title: "x", friendly_name: "Friendly",
                               description: "Explicit help", field_type: "string") ])
     assert_equal "Explicit help", schema[:properties]["x"][:description]
+  end
+
+  # enum and type must BOTH be satisfied, so a nullable type with null missing
+  # from the enum still forbids null — and the model must invent a value.
+  def test_a_single_select_can_actually_be_null
+    prop = build([ Field.new(title: "sev", friendly_name: "Severity",
+                             field_type: "single_select", enum_options: %w[low high]) ])[:properties]["sev"]
+    schemer = JSONSchemer.schema(JSON.parse({ type: "object", properties: { sev: prop }, required: [] }.to_json))
+
+    assert schemer.valid?({ "sev" => nil }), "a single_select must be able to abstain"
+    assert schemer.valid?({ "sev" => "low" }), "a real option must still validate"
+    refute schemer.valid?({ "sev" => "medium" }), "the enum must still reject values outside it"
+  end
+
+  def test_a_multi_select_can_be_null_without_loosening_its_item_enum
+    prop = build([ Field.new(title: "sx", friendly_name: "Symptoms",
+                             field_type: "multi_select", enum_options: %w[cough fever]) ])[:properties]["sx"]
+    schemer = JSONSchemer.schema(JSON.parse({ type: "object", properties: { sx: prop }, required: [] }.to_json))
+
+    assert schemer.valid?({ "sx" => nil }), "the array itself may be absent"
+    assert schemer.valid?({ "sx" => [] }), "an empty selection is legitimate"
+    refute schemer.valid?({ "sx" => [ nil ] }), "null is NOT a valid member of the list"
+    refute schemer.valid?({ "sx" => [ "sneeze" ] }), "items must still come from the enum"
   end
 
   def test_object_envelope
