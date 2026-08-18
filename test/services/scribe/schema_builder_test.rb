@@ -80,14 +80,8 @@ class SchemaBuilderTest < Minitest::Test
     assert_equal "Explicit help", schema[:properties]["x"][:description]
   end
 
-  # The point of the nullable types above, stated as behaviour rather than
-  # shape. A single_select carries BOTH `type` and `enum`, and a value must
-  # satisfy both — so leaving null out of the enum makes the enum the tighter
-  # constraint and forbids null no matter how nullable the type is. A strict
-  # decoding engine then cannot answer "not mentioned in the transcript": it is
-  # forced to pick one of the options, inventing a clinical value rather than
-  # omitting one. Assert against a real validator so a regression cannot hide
-  # behind a passing shape assertion.
+  # enum and type must BOTH be satisfied, so a nullable type with null missing
+  # from the enum still forbids null — and the model must invent a value.
   def test_a_single_select_can_actually_be_null
     prop = build([ Field.new(title: "sev", friendly_name: "Severity",
                              field_type: "single_select", enum_options: %w[low high]) ])[:properties]["sev"]
