@@ -26,6 +26,9 @@ gem "ruby-openai", "~> 6.2"
 gem "pagy", "~> 6.0"
 # Pundit for authorization
 gem "pundit", "~> 2.4"
+# Admin "view as user" support. Overrides current_user without touching the
+# Warden session, so the admin's own login survives the impersonation.
+gem "pretender", "~> 1.0"
 # AWS S3 for file storage
 gem "aws-sdk-s3", require: false
 # Devise for authentication
