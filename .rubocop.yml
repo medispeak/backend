@@ -16,3 +16,4 @@ Rails/RefuteMethods:
     - "test/services/llm/adapters/anthropic_adapter_test.rb"
     - "test/services/scribe/stages_test.rb"
     - "test/services/scribe/schema_validator_test.rb"
+    - "test/services/scribe/schema_builder_test.rb"

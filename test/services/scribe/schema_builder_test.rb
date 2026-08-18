@@ -1,6 +1,7 @@
 # Standalone unit tests for Scribe::SchemaBuilder.
 # Runnable without Rails/DB: `ruby -Itest test/services/scribe/schema_builder_test.rb`
 require "minitest/autorun"
+require "json_schemer"
 
 # Standalone mode loads the file directly; under `bin/rails test` Zeitwerk
 # autoloads Scribe::SchemaBuilder, so skip the manual load.
@@ -77,6 +78,35 @@ class SchemaBuilderTest < Minitest::Test
     schema = build([ Field.new(title: "x", friendly_name: "Friendly",
                               description: "Explicit help", field_type: "string") ])
     assert_equal "Explicit help", schema[:properties]["x"][:description]
+  end
+
+  # The point of the nullable types above, stated as behaviour rather than
+  # shape. A single_select carries BOTH `type` and `enum`, and a value must
+  # satisfy both — so leaving null out of the enum makes the enum the tighter
+  # constraint and forbids null no matter how nullable the type is. A strict
+  # decoding engine then cannot answer "not mentioned in the transcript": it is
+  # forced to pick one of the options, inventing a clinical value rather than
+  # omitting one. Assert against a real validator so a regression cannot hide
+  # behind a passing shape assertion.
+  def test_a_single_select_can_actually_be_null
+    prop = build([ Field.new(title: "sev", friendly_name: "Severity",
+                             field_type: "single_select", enum_options: %w[low high]) ])[:properties]["sev"]
+    schemer = JSONSchemer.schema(JSON.parse({ type: "object", properties: { sev: prop }, required: [] }.to_json))
+
+    assert schemer.valid?({ "sev" => nil }), "a single_select must be able to abstain"
+    assert schemer.valid?({ "sev" => "low" }), "a real option must still validate"
+    refute schemer.valid?({ "sev" => "medium" }), "the enum must still reject values outside it"
+  end
+
+  def test_a_multi_select_can_be_null_without_loosening_its_item_enum
+    prop = build([ Field.new(title: "sx", friendly_name: "Symptoms",
+                             field_type: "multi_select", enum_options: %w[cough fever]) ])[:properties]["sx"]
+    schemer = JSONSchemer.schema(JSON.parse({ type: "object", properties: { sx: prop }, required: [] }.to_json))
+
+    assert schemer.valid?({ "sx" => nil }), "the array itself may be absent"
+    assert schemer.valid?({ "sx" => [] }), "an empty selection is legitimate"
+    refute schemer.valid?({ "sx" => [ nil ] }), "null is NOT a valid member of the list"
+    refute schemer.valid?({ "sx" => [ "sneeze" ] }), "items must still come from the enum"
   end
 
   def test_object_envelope
