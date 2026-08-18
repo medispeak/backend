@@ -6,18 +6,14 @@
 # you're free to overwrite the RESTful controller actions.
 module Admin
   class ApplicationController < Administrate::ApplicationController
-    # Repeated from ::ApplicationController on purpose: Administrate's base
-    # class descends from ActionController::Base, so this namespace inherits
-    # none of the app's overrides. Without it, current_user here would stay the
-    # real admin and /admin would remain open during an impersonation — the one
-    # failure that would look like it worked.
+    # Required here too: this namespace inherits nothing from
+    # ::ApplicationController, so without it /admin stays open mid-impersonation.
     impersonates :user
 
     before_action :authenticate_admin
 
-    # authenticate_user! is Warden's and still sees the real admin (pretender
-    # never touches the session), so the admin stays logged in; it is admin?
-    # going false on the impersonated current_user that closes this namespace.
+    # Warden still sees the real admin; it is admin? going false on the
+    # impersonated current_user that closes this namespace.
     def authenticate_admin
       authenticate_user!
       redirect_to root_path, alert: "Not authorized." unless current_user.admin?
