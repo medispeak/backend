@@ -1,8 +1,7 @@
 require "test_helper"
 
-# Admin "view as user". The properties worth pinning down are the ones that are
-# invisible when they break: that /admin really closes, that writes really are
-# refused, and that the admin can always get back out.
+# The properties that are invisible when they break: /admin really closes,
+# writes are really refused, and the admin can always get back out.
 class ImpersonationsControllerTest < ActionDispatch::IntegrationTest
   include Devise::Test::IntegrationHelpers
 
@@ -54,9 +53,8 @@ class ImpersonationsControllerTest < ActionDispatch::IntegrationTest
 
   # ------------------------------------------------------------ the entry point
 
-  # The show override renders Administrate's own template rather than a copy of
-  # it, so this guards both halves: that the button appears, and that the stock
-  # page still renders around it.
+  # Guards both halves of the show override: the button, and the stock page
+  # still rendering around it.
   test "admin user page offers the button and still renders the resource" do
     sign_in @admin
     get admin_user_path(@target)
@@ -109,9 +107,7 @@ class ImpersonationsControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/Stop viewing as user/, response.body)
   end
 
-  # The exit control sits under a fixed z-50 flash toast by default, which hid
-  # it exactly when a read-only refusal fired. The banner outranks the flash and
-  # the flash drops below it; both have to hold or the safety valve is covered.
+  # The fixed z-50 flash hid the exit exactly when a read-only refusal fired.
   test "banner outranks the flash and the flash steps aside for it" do
     sign_in @admin
     start_impersonating
@@ -184,8 +180,7 @@ class ImpersonationsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
-  # The exit must not sit behind the read-only guard or the admin-only gate,
-  # or it becomes unreachable exactly when it is needed.
+  # The exit must sit behind neither the read-only guard nor the admin gate.
   test "the exit is reachable despite being a write and despite /admin being closed" do
     sign_in @admin
     start_impersonating
@@ -203,8 +198,7 @@ class ImpersonationsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_path
   end
 
-  # pretender re-checks the real login each request, so a logout cannot leave a
-  # dangling impersonated session behind.
+  # pretender re-checks the real login each request.
   test "signing out ends the impersonation" do
     sign_in @admin
     start_impersonating

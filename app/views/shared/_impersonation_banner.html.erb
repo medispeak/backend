@@ -1,9 +1,6 @@
-<%# Persistent while impersonating: the whole point is that the admin can never
-    forget whose data is on screen, so this sits above the nav on every page. %>
 <% if impersonating? %>
-  <%# Sticky and above the flash's z-50: the exit is the safety valve, so it
-      must stay reachable without scrolling and must never be painted over.
-      The flash offsets itself downward to match — see shared/_flash. %>
+  <%# Above the flash's z-50 so the exit is never painted over; the flash
+      offsets down to match (see shared/_flash). %>
   <div class="bg-amber-500 text-amber-950 sticky top-0 z-[60]" role="status">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center justify-between gap-2">
       <p class="text-sm font-medium">
