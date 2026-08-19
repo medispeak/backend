@@ -684,9 +684,18 @@ module Scribe
     # A duplicate insert raises ActiveRecord::RecordNotUnique, which the
     # best-effort #meter rescue swallows without demoting the output. Format is a
     # stable contract for the index — see plan 004.
+    #
+    # Suffixed with a per-output attempt number, same reasoning as
+    # ocr_attempt_number: a transcript-edit reprocess (PATCH .../transcript)
+    # resets an already-:success output back to :pending and restructures it, a
+    # SECOND physical attempt at the same output. Without the suffix that second
+    # attempt's insert collides with the first attempt's row on the unique
+    # (api_token_id, dedupe_key) index, the best-effort #meter rescue swallows
+    # it, and the reprocess is never charged.
     def dedupe_key_for(function, scribe_output)
       if scribe_output
-        "#{session.id}:#{scribe_output.id}:#{function}"
+        attempt = session.usage_events.where(scribe_output: scribe_output, function: function.to_s).count
+        "#{session.id}:#{scribe_output.id}:#{function}:#{attempt}"
       elsif function == :ocr
         "#{session.id}:ocr:#{ocr_attempt_number}"
       else
