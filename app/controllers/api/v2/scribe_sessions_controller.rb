@@ -498,6 +498,97 @@ module Api
         render json: serialize(session), status: status_for(session)
       end
 
+      # PATCH /api/v2/scribe_sessions/:id/transcript
+      #
+      # Lets a client submit a corrected transcript (fixing ASR mistakes without
+      # re-recording) and re-run structuring against it. ASR/OCR never re-runs —
+      # `Orchestrator#ensure_transcript!` short-circuits on a present Transcript —
+      # only the persisted text changes, and every non-transcript output is reset
+      # to :pending so the next pipeline pass restructures from the edited text.
+      # Only reachable once the session has already reached a terminal status: a
+      # transcript never exists any earlier than that.
+      def update_transcript
+        session = find_session
+        return unless session
+        return if reject_expired(session)
+
+        transcript = session.transcript
+        unless transcript
+          render_error(
+            code: "validation_error",
+            message: "session has no transcript yet",
+            status: :unprocessable_entity
+          )
+          return
+        end
+
+        text = update_transcript_params[:text]
+        if text.blank?
+          render_error(code: "validation_error", message: "text is required", status: :unprocessable_entity)
+          return
+        end
+
+        fingerprint = "update_transcript:#{session.id}:#{Digest::SHA256.hexdigest(text)}"
+        with_idempotency(fingerprint) do
+          # Same atomic-claim shape as commit: exactly one request moves a
+          # committable session to :processing, so two racing edits can never
+          # both reset the outputs and enqueue two orchestrator runs.
+          original_status = session.status
+          claimed = ScribeSession
+                    .where(id: session.id, status: %w[completed partial failed])
+                    .update_all(status: "processing", updated_at: Time.current)
+          if claimed.zero?
+            render_error(
+              code: "validation_error",
+              message: "Session cannot be reprocessed from status #{session.reload.status}",
+              status: :conflict
+            )
+            next
+          end
+
+          begin
+            transcript.update!(text: text)
+            session.scribe_outputs.update_all(
+              status: "pending", result: nil, result_errors: nil, updated_at: Time.current
+            )
+
+            estimate = TRANSCRIPT_REPROCESS_ESTIMATE
+
+            limit_check = Metering::LimitGuard.check(
+              account: session.account, user: session.user, estimated_cost: estimate
+            )
+            unless limit_check.ok?
+              revert_commit_claim(session, original_status)
+              violation = limit_check.violation.limit
+              render_error(
+                code: "usage_limit_exceeded",
+                message: "#{violation.period.capitalize} #{violation.metric} limit reached for this #{violation.scope == 'per_user' ? 'user' : 'account'}",
+                status: :payment_required
+              )
+              next
+            end
+
+            token = Metering::QuotaGuard.hold!(account: session.account, estimate: estimate)
+            unless token.ok?
+              revert_commit_claim(session, original_status)
+              render_error(
+                code: "insufficient_credit",
+                message: "Account has insufficient credit to reprocess this session",
+                status: :payment_required
+              )
+              next
+            end
+
+            ProcessScribeSessionJob.perform_later(session.id)
+          rescue StandardError
+            revert_commit_claim(session, original_status)
+            raise
+          end
+
+          render json: serialize(session.reload), status: :accepted
+        end
+      end
+
       # GET /api/v2/scribe_sessions
       def index
         sessions = account_sessions
@@ -519,6 +610,10 @@ module Api
       # Coarse per-page rate for the document commit hold (vision OCR +
       # structuring); same conservative-estimate philosophy as the audio rate.
       COMMIT_ESTIMATE_RATE_PER_PAGE = 0.01
+      # Flat hold for a transcript-edit reprocess: unlike commit, this never
+      # re-runs ASR/OCR, only the (cheap) structuring calls — so it is sized
+      # off gpt-4o-mini-class structuring cost rather than the audio/page rate.
+      TRANSCRIPT_REPROCESS_ESTIMATE = 0.01
 
       private
 
@@ -794,6 +889,10 @@ module Api
             { fields: [ :key, :label, :type, :description, :minimum, :maximum, { enum: [] } ] }
           ]
         )
+      end
+
+      def update_transcript_params
+        params.permit(:text)
       end
     end
   end
