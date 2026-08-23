@@ -63,6 +63,13 @@ module Llm
         nil
       ensure
         src.close!
+        # The source was read to EOF; hand it back rewound so a caller that
+        # falls back to sending the original bytes posts a full stream, not an
+        # exhausted one that faraday-multipart would advertise at full length.
+        begin
+          io.rewind if io.respond_to?(:rewind)
+        rescue IOError
+        end
       end
     end
 

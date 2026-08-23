@@ -84,6 +84,7 @@ class AudioConverterTest < ActiveSupport::TestCase
 
     File.open(garbage, "rb") do |io|
       assert_nil Llm::AudioConverter.to_ogg(io, ".webm")
+      assert_equal 0, io.pos, "source IO must be rewound so the caller can still send the original bytes"
     end
   end
 end
