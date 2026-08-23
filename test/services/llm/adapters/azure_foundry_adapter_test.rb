@@ -174,12 +174,14 @@ class AzureFoundryAdapterTest < ActiveSupport::TestCase
     assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
   end
 
-  test "a 4xx (e.g. unsupported audio) maps to BadResponse so Caller falls back" do
+  test "a 4xx maps to BadResponse carrying the provider's error detail" do
     stub_request(:post, URL).to_return(
       status: 400, headers: { "Content-Type" => "application/json" },
-      body: { error: { message: "unsupported audio" } }.to_json
+      body: { error: { code: "invalid_audio", message: "unsupported audio" } }.to_json
     )
-    assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    error = assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
+    assert_match(/status 400/, error.message)
+    assert_match(/invalid_audio/, error.message)
   end
 
   test "a 429 maps to RateLimited" do
