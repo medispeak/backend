@@ -1,4 +1,5 @@
 require "test_helper"
+require "mocha/minitest"
 
 # Azure Foundry (LLM Speech API / MAI-Transcribe) adapter against stubbed HTTP
 # (WebMock). Rails-integrated so faraday-multipart's :multipart middleware is
@@ -184,6 +185,43 @@ class AzureFoundryAdapterTest < ActiveSupport::TestCase
   test "a 429 maps to RateLimited" do
     stub_request(:post, URL).to_return(status: 429, body: "slow down")
     assert_raises(Llm::RateLimited) { adapter.transcribe(audio, mode: :transcribe) }
+  end
+
+  test "webm auto-remuxes to ogg before the request when ffmpeg is available" do
+    stub_ok
+    ogg = Tempfile.new([ "converted", ".ogg" ])
+    ogg.binmode
+    ogg.write("OggS-fake-bytes")
+    ogg.rewind
+
+    Llm::AudioConverter.stubs(:to_ogg).returns(ogg)
+    adapter.transcribe(audio, mode: :transcribe)
+
+    assert_requested(:post, URL) do |req|
+      req.body.include?("Content-Type: audio/ogg") && !req.body.include?("audio/webm")
+    end
+    assert ogg.closed?, "adapter must close the converted tempfile"
+  end
+
+  test "webm goes as-is when no converter is available (fallback still drives recovery)" do
+    stub_ok
+    Llm::AudioConverter.stubs(:to_ogg).returns(nil)
+    adapter.transcribe(audio, mode: :transcribe)
+
+    assert_requested(:post, URL) { |req| req.body.include?("Content-Type: audio/webm") }
+  end
+
+  test "accepted formats are never run through the converter" do
+    stub_ok
+    wav = Tempfile.new([ "seg", ".wav" ])
+    wav.binmode
+    wav.write("RIFF-bytes")
+    wav.rewind
+
+    Llm::AudioConverter.expects(:to_ogg).never
+    adapter.transcribe(wav, mode: :transcribe)
+
+    assert_requested(:post, URL) { |req| req.body.include?("Content-Type: audio/wav") }
   end
 
   test "the model id flows from config, so new Foundry speech models are a data change" do

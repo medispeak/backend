@@ -42,3 +42,6 @@ skills-lock.json
 
 # macOS Finder metadata
 .DS_Store
+
+# Static ffmpeg installed by the deploy build command; never committed.
+/vendor/ffmpeg/

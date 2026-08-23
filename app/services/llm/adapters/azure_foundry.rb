@@ -8,7 +8,10 @@ module Llm
     # WAV, Ogg/Opus, MP3, FLAC accepted; WebM and M4A/AAC rejected with 400
     # invalid_audio (despite the generic LLM Speech docs listing WebM). The
     # browser recorder emits WebM/Opus — same codec, unaccepted container — so
-    # the 3s segment path needs a fallback provider until Azure takes WebM.
+    # when ffmpeg is bundled the adapter remuxes those to Ogg before posting
+    # (Llm::AudioConverter) and both the 3s segment path and whole-file audio
+    # reach MAI directly; without ffmpeg the original bytes go out and the 400
+    # drives the normal fallback.
     #
     # Omitting `locales` keeps the model's multilingual auto-detect; a language
     # hint is sent as a bare ISO-639 code ("ml-IN" -> "ml"). The portable
@@ -27,6 +30,10 @@ module Llm
       # be picked up by an openai_compatible fallback and 404 it.
       DEFAULT_API_VERSION = "2025-10-15".freeze
 
+      # Containers the MAI backend ingests as-is (verified live); everything
+      # else convertible goes through Llm::AudioConverter first.
+      ACCEPTED_EXTENSIONS = %w[.wav .ogg .opus .mp3 .flac].freeze
+
       # audio extension -> a content-type on Azure's accepted-format list.
       CONTENT_TYPES = {
         ".webm" => "audio/webm", ".ogg" => "audio/ogg", ".opus" => "audio/opus",
@@ -38,7 +45,8 @@ module Llm
       def transcribe(audio_io, language: nil, mode: :transcribe, audio_seconds: 0, **_opts)
         started = monotonic
 
-        payload = { audio: file_part(audio_io), definition: definition_json(language, mode) }
+        converted = maybe_convert(audio_io)
+        payload = { audio: file_part(converted || audio_io), definition: definition_json(language, mode) }
         response = client.post("#{TRANSCRIBE_PATH}?api-version=#{api_version}", payload)
         body = response.body
 
@@ -61,9 +69,24 @@ module Llm
         )
       rescue Faraday::Error => e
         raise map_transport_error(e)
+      ensure
+        converted&.close!
       end
 
       private
+
+      def maybe_convert(audio_io)
+        ext = source_extension(audio_io)
+        return nil if ext.empty? || ACCEPTED_EXTENSIONS.include?(ext)
+        return nil unless Llm::AudioConverter.convertible?(ext)
+
+        Llm::AudioConverter.to_ogg(audio_io, ext)
+      end
+
+      def source_extension(audio_io)
+        path = audio_io.respond_to?(:path) ? audio_io.path.to_s : ""
+        File.extname(path).downcase
+      end
 
       def definition_json(language, mode)
         enhanced = { enabled: true, model: config.api_model_id }
