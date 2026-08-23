@@ -71,4 +71,10 @@ class TemplateDashboard < Administrate::BaseDashboard
   def display_resource(template)
     "#{template.name}"
   end
+
+  # Administrate eager-loads belongs_to/has_one on an index but not has_many, so
+  # listing domains costs a query per row without this.
+  def collection_includes
+    super + [ :domains ]
+  end
 end

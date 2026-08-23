@@ -14,6 +14,10 @@ class AiModel < ApplicationRecord
     accepts_audio can_transcribe can_structure
     supports_json_schema supports_function_calling native_diarization
     supports_vision supports_pdf
+    # Structures reliably from a prompt-described schema, without the provider
+    # enforcing json_schema. True of the Anthropic models; declared per model so
+    # the pipeline never has to branch on which provider it is talking to.
+    structures_without_json_schema
   ].freeze
 
   # The MINIMUM capability set a model needs to serve each assignment function.

@@ -68,4 +68,10 @@ class PageDashboard < Administrate::BaseDashboard
   def display_resource(page)
     page.name
   end
+
+  # Administrate eager-loads belongs_to/has_one on an index but not has_many, so
+  # listing form_fields costs a query per row without this.
+  def collection_includes
+    super + [ :form_fields ]
+  end
 end
