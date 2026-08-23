@@ -33,10 +33,10 @@ class AudioConverterTest < ActiveSupport::TestCase
   test "convertible? covers the containers Azure rejects and nothing it accepts" do
     assert Llm::AudioConverter.convertible?(".webm")
     assert Llm::AudioConverter.convertible?(".m4a")
-    refute Llm::AudioConverter.convertible?(".wav")
-    refute Llm::AudioConverter.convertible?(".ogg")
-    refute Llm::AudioConverter.convertible?(".mp3")
-    refute Llm::AudioConverter.convertible?(nil)
+    assert_not Llm::AudioConverter.convertible?(".wav")
+    assert_not Llm::AudioConverter.convertible?(".ogg")
+    assert_not Llm::AudioConverter.convertible?(".mp3")
+    assert_not Llm::AudioConverter.convertible?(nil)
   end
 
   test "to_ogg returns nil when no ffmpeg binary is available" do
