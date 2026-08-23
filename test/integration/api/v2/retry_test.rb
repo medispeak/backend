@@ -200,7 +200,7 @@ module Api
 
         events = session.reload.usage_events.where(function: "structuring")
         assert_equal 3, events.count,
-                     "a retry that collides on (api_token_id, dedupe_key) is provider spend billed to nobody"
+                     "a retry that collides on dedupe_key is provider spend billed to nobody"
         assert_equal 3, events.map(&:dedupe_key).uniq.size
       end
 

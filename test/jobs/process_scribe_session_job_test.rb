@@ -84,6 +84,7 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
   end
 
   test "delivers a signed webhook when callback_url is set" do
+    stub_webhook_dns
     stub_asr(text: "the patient has a fever")
     stub_chat({ "diagnosis" => "fever" })
 
@@ -203,7 +204,7 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
 
     session = create(:scribe_session, account: create(:account), language: "en")
     add_segment(session, seq: 0, status: "transcribing",
-                updated_at: 3.minutes.ago)
+                updated_at: (ProcessScribeSessionJob::STALE_CLAIM_AGE + 1.minute).ago)
     create(:scribe_output, scribe_session: session, output_type: "transcript")
 
     ProcessScribeSessionJob.perform_now(session.id, ProcessScribeSessionJob::MAX_SETTLE_ATTEMPTS)
@@ -228,6 +229,7 @@ class ProcessScribeSessionJobTest < ActiveSupport::TestCase
   end
 
   test "webhook body is PHI-light and carries no transcript text or field values" do
+    stub_webhook_dns
     stub_asr(text: "secret transcript content")
     stub_chat({ "diagnosis" => "secret diagnosis value" })
 

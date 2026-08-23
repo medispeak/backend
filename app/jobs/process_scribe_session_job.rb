@@ -20,10 +20,9 @@
 # swept to :failed by Metering::ReservationSweeper rather than trued up against
 # the ledger (holds are postpaid and reserve no credit balance).
 class ProcessScribeSessionJob < ApplicationJob
-  # Settlement waits ~2 minutes (matching STALE_CLAIM_AGE) for in-flight segment
-  # jobs, then treats any remaining "transcribing" claim as a dead worker:
-  # reclaim and retry inline exactly once before the orchestrator settles the
-  # session.
+  # Settlement waits for in-flight segment jobs, then treats any remaining
+  # "transcribing" claim as a dead worker: reclaim and retry inline exactly once
+  # before the orchestrator settles the session.
   #
   # The wait is DELIBERATELY not flat. A client commits the instant the last
   # segment upload returns, so that segment's ASR (~0.5-2s) is nearly always
@@ -31,14 +30,20 @@ class ProcessScribeSessionJob < ApplicationJob
   # single commit a full tick of dead time before anything else could happen.
   # The first FAST_SETTLE_ATTEMPTS therefore retry on a 1s tick (the floor is
   # the dispatcher's own polling_interval, config/queue.yml), and only a
-  # genuinely slow settlement backs off to the coarse tick. Attempt counts are
-  # sized so the TOTAL budget still covers STALE_CLAIM_AGE:
-  #   5 x 1s + 23 x 5s = 120s.
+  # genuinely slow settlement backs off to the coarse tick:
+  #   5 x 1s + 30 x 10s = 305s.
+  #
+  # STALE_CLAIM_AGE must stay ABOVE the worst-case provider call — the default
+  # request_timeout is 120s and Llm::Caller may spend that twice before its
+  # fallback answers — or a slow-but-alive job gets reclaimed and the segment is
+  # transcribed (and billed) twice. The settle budget covers that age so a
+  # genuinely dead worker is still reclaimed rather than falling through to the
+  # whole-file pass.
   FAST_SETTLE_ATTEMPTS = 5
   FAST_SETTLE_WAIT = 1.second
-  MAX_SETTLE_ATTEMPTS = 28
-  SETTLE_WAIT = 5.seconds
-  STALE_CLAIM_AGE = 2.minutes
+  MAX_SETTLE_ATTEMPTS = 35
+  SETTLE_WAIT = 10.seconds
+  STALE_CLAIM_AGE = 5.minutes
 
   # Backoff for the next settle retry: short while the racing segment is
   # plausibly still mid-call, coarse once waiting is clearly not paying off.
@@ -98,13 +103,16 @@ class ProcessScribeSessionJob < ApplicationJob
         return :waiting
       end
 
-      # Out of patience: a claim this old means the worker died mid-call.
-      # Conditionally reclaim (the age guard spares a live-but-slow job) and
-      # retry inline once; whatever is still unsettled after this is reported
-      # by the orchestrator as an explicit per-segment failure.
+      # Out of patience: a claim older than any possible provider call means the
+      # worker died mid-call. Bumping `attempt` is what makes the reclaim safe —
+      # it revokes the dead run's claim (its writes are scoped to the attempt it
+      # took) and gives the retry its own dedupe key, so if the original was
+      # merely slow both calls are billed instead of one silently colliding.
+      # Whatever is still unsettled after this is reported by the orchestrator
+      # as an explicit per-segment failure.
       segments.where(status: "transcribing")
               .where(updated_at: ...STALE_CLAIM_AGE.ago)
-              .update_all(status: "failed", updated_at: Time.current)
+              .update_all("status = 'failed', attempt = attempt + 1, updated_at = NOW()")
       transcribe_inline(segments.where(status: "failed"))
     end
 
@@ -115,8 +123,14 @@ class ProcessScribeSessionJob < ApplicationJob
     scope.pluck(:id).each { |id| TranscribeSegmentJob.perform_now(id) }
   end
 
+  # The delivery_id is minted HERE, once per finalize: ActiveJob retries of the
+  # delivery repeat the argument (so consumers dedupe), while a later re-run of
+  # the pipeline is a new delivery and gets its own id — even when it lands the
+  # session back on the status it already reported.
   def enqueue_webhook(session)
-    ScribeWebhookJob.perform_later(session.id) if session.callback_url.present?
+    return if session.callback_url.blank?
+
+    ScribeWebhookJob.perform_later(session.id, SecureRandom.uuid)
   rescue StandardError => e
     Rails.logger.error("ScribeWebhookJob enqueue failed for session=#{session.id}: #{e.class}: #{e.message}")
   end

@@ -162,7 +162,10 @@ class UsageController < ApplicationController
 
     limits.map do |limit|
       account_ids = (subtrees[limit.account_id] ||= limit.account.subtree_ids)
-      used = window_usage(limit, account_ids)
+      # The guard itself measures this — see Metering::LimitGuard.window_usage.
+      # A per_user cap constrains the ACTING user; on this page that is the
+      # person reading it, so the bar shows their own standing against the cap.
+      used = Metering::LimitGuard.window_usage(limit, user: current_user, account_ids: account_ids)
       cap = limit.limit_value.to_d
 
       {
@@ -174,28 +177,5 @@ class UsageController < ApplicationController
         percent: cap.positive? ? [ (used / cap * 100).to_f, 100.0 ].min.round : 0
       }
     end
-  end
-
-  # Mirrors Metering::LimitGuard#window_usage: same calendar window, the same
-  # "everything except failed" filter, the same subtree / per_user split. Read
-  # app/services/metering/limit_guard.rb before changing this.
-  def window_usage(limit, account_ids)
-    events = UsageEvent.where(created_at: limit_window(limit.period))
-                       .where.not(status: "failed")
-    events =
-      case limit.scope
-      when "subtree" then events.where(account_id: account_ids)
-      # A per_user cap constrains the ACTING user, summed globally by user_id.
-      # On this page the acting user is the person reading it, so the bar shows
-      # their own standing against the cap.
-      when "per_user" then events.where(user_id: current_user.id)
-      end
-
-    events.sum(limit.metric == "tokens" ? :total_tokens : :cost).to_d
-  end
-
-  def limit_window(period)
-    now = Time.zone.now
-    period == "daily" ? now.all_day : now.all_month
   end
 end

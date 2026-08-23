@@ -26,5 +26,23 @@ module Llm
     def discarded
       Array(discarded_attempts)
     end
+
+    # Adapts a stage result struct (AsrStage::Result / OcrStage::Result /
+    # StructuringStage::Result) to the contract Metering::UsageRecorder reads.
+    # The stage structs do not share a superclass, hence the respond_to? guards.
+    # `usage` overrides the stage's own — a combined run grafts the page count
+    # on, which only OcrStage does for itself.
+    def self.from_stage(stage, usage: nil)
+      new(
+        text: stage.respond_to?(:text) ? stage.text : nil,
+        structured: stage.respond_to?(:structured) ? stage.structured : nil,
+        model: stage.model,
+        provider: stage.provider,
+        usage: usage || stage.usage,
+        latency_ms: stage.respond_to?(:latency_ms) ? stage.latency_ms : nil,
+        finish_reason: stage.respond_to?(:finish_reason) ? stage.finish_reason : nil,
+        raw: stage.respond_to?(:raw) ? stage.raw : nil
+      )
+    end
   end
 end

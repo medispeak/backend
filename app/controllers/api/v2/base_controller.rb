@@ -97,31 +97,62 @@ module Api
         return yield if key.blank? || current_api_token.nil?
 
         existing = IdempotencyKey.fresh.find_by(api_token: current_api_token, key: key)
+        return replay_idempotent(existing, fingerprint) if existing
 
-        if existing
-          if existing.request_fingerprint == fingerprint
-            render json: existing.response_body, status: existing.response_status
-            return
-          else
-            render_error(
-              code: "validation_error",
-              message: "Idempotency-Key reuse with a different request payload",
-              status: :conflict
+        # Claim the key BEFORE running the action. Reading first and writing
+        # after let two concurrent requests carrying one key both execute it,
+        # each creating a separately billable session; the unique index on
+        # (api_token_id, key) makes the loser of that race fall through to the
+        # same replay/conflict path a sequential repeat takes.
+        claim =
+          begin
+            IdempotencyKey.create!(
+              api_token: current_api_token,
+              key: key,
+              request_fingerprint: fingerprint,
+              expires_at: 24.hours.from_now
             )
-            return
+          rescue ActiveRecord::RecordNotUnique
+            return replay_idempotent(
+              IdempotencyKey.fresh.find_by(api_token: current_api_token, key: key), fingerprint
+            )
           end
+
+        begin
+          yield
+        rescue StandardError
+          # The action recorded nothing, so the key must not stay claimed —
+          # otherwise the client can never retry it.
+          claim.destroy
+          raise
         end
 
-        yield
+        # Best-effort: the response is already rendered, so a failure to store
+        # it must not turn a successful call into a 500.
+        claim.update(response_body: response_body_json, response_status: response.status)
+      end
 
-        IdempotencyKey.create!(
-          api_token: current_api_token,
-          key: key,
-          request_fingerprint: fingerprint,
-          response_body: response_body_json,
-          response_status: response.status,
-          expires_at: 24.hours.from_now
-        )
+      # Replays a stored response, or refuses. A claim with no response yet is a
+      # concurrent request still running, which is a conflict rather than a
+      # replay — there is nothing to replay until it finishes.
+      def replay_idempotent(record, fingerprint)
+        if record && record.request_fingerprint != fingerprint
+          return render_error(
+            code: "validation_error",
+            message: "Idempotency-Key reuse with a different request payload",
+            status: :conflict
+          )
+        end
+
+        if record.nil? || record.response_status.nil?
+          return render_error(
+            code: "idempotency_in_progress",
+            message: "A request with this Idempotency-Key is already in progress",
+            status: :conflict
+          )
+        end
+
+        render json: record.response_body, status: record.response_status
       end
 
       def idempotency_key_header

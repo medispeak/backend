@@ -84,7 +84,11 @@ class PlaygroundController < ApplicationController
   def mint_token
     authorize ScribeSession, :create?
 
-    session = policy_scope(ScribeSession).find_by(id: params[:session_id])
+    # Scoped to the account this playground run belongs to, NOT to the caller's
+    # policy scope: an admin's scope is every tenant's sessions, so resolving
+    # the id through it would mint an upload-capable token for an unrelated
+    # tenant's consultation. Same account the session was created under.
+    session = playground_sessions.find_by(id: params[:session_id])
     return head :not_found if session.nil?
 
     token, expires_at = Scribe::SessionToken.mint(session)
@@ -100,7 +104,7 @@ class PlaygroundController < ApplicationController
     # The segments' attachments come along because the result now plays the
     # recording back, and asking each segment for its blob one at a time is a
     # query per segment on a page that has just made dozens of them.
-    session = policy_scope(ScribeSession)
+    session = playground_sessions
                 .with_attached_audio_files
                 .includes(transcript_segments: { data_attachment: :blob })
                 .find_by(id: params[:session_id])
@@ -165,5 +169,11 @@ class PlaygroundController < ApplicationController
   # already allows.
   def playground_account
     @template.account || current_account
+  end
+
+  # The sessions this playground may act on. Deliberately account-scoped rather
+  # than policy-scoped — see #mint_token.
+  def playground_sessions
+    ScribeSession.where(account: playground_account)
   end
 end
