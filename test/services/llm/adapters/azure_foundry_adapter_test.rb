@@ -129,6 +129,27 @@ class AzureFoundryAdapterTest < ActiveSupport::TestCase
     assert_nil result.language
   end
 
+  test "a malformed phrases field yields nil language, not a TypeError" do
+    stub_request(:post, URL).to_return(
+      status: 200, headers: { "Content-Type" => "application/json" },
+      body: { combinedPhrases: [ { text: "ok" } ], phrases: "corrupt" }.to_json
+    )
+    result = adapter.transcribe(audio, mode: :transcribe)
+
+    assert_equal "ok", result.text
+    assert_nil result.language
+  end
+
+  test "junk elements inside combinedPhrases are skipped, not crashed on" do
+    stub_request(:post, URL).to_return(
+      status: 200, headers: { "Content-Type" => "application/json" },
+      body: { combinedPhrases: [ { text: "ok" }, 123, nil ], phrases: [] }.to_json
+    )
+    result = adapter.transcribe(audio, mode: :transcribe)
+
+    assert_equal "ok", result.text
+  end
+
   test "a non-JSON 200 maps to BadResponse so Caller falls back" do
     stub_request(:post, URL).to_return(
       status: 200, headers: { "Content-Type" => "text/html" }, body: "<html>gateway</html>"

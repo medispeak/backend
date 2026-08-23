@@ -48,8 +48,8 @@ module Llm
         end
 
         Llm::Result.new(
-          text: Array(body["combinedPhrases"]).map { |p| p["text"] }.join("\n"),
-          language: body.dig("phrases", 0, "locale"),
+          text: Array(body["combinedPhrases"]).filter_map { |p| p["text"] if p.is_a?(Hash) }.join("\n"),
+          language: detected_locale(body),
           model: config.api_model_id,
           provider: config.provider_name || config.provider_kind.to_s,
           usage: Llm::Usage.new(audio_seconds: usage_seconds(audio_seconds, body)),
@@ -77,6 +77,14 @@ module Llm
         phrases = Array(config.options[:phrase_list])
         definition[:phraseList] = { phrases: phrases } if phrases.any?
         definition.to_json
+      end
+
+      # Azure reports locale per phrase; take the first. Tolerates a malformed
+      # phrases field — locale is advisory, never worth a TypeError that would
+      # escape the Llm::Error hierarchy and skip fallback on a good transcript.
+      def detected_locale(body)
+        first = Array(body["phrases"]).first
+        first.is_a?(Hash) ? first["locale"] : nil
       end
 
       # MAI models take bare ISO-639 codes ("ml", never "ml-IN"); nil and the
