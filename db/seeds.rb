@@ -378,9 +378,10 @@ end
 
 # MAI-Transcribe 1.5 — multilingual (43 languages incl. ml/hi/ta) with entity
 # biasing via options[:phrase_list] and verbatim output via
-# options[:transcribe_style]. Accepts WAV/Ogg-Opus/MP3/FLAC but rejects
-# WebM (verified live), so pair it with a Whisper/Sarvam fallback wherever the
-# browser's WebM/Opus segment path feeds ASR.
+# options[:transcribe_style]. Azure rejects WebM (verified live), but the
+# adapter auto-remuxes browser WebM/Opus to Ogg when ffmpeg is bundled
+# (Llm::AudioConverter) — without ffmpeg, pair it with a Whisper/Sarvam
+# fallback for the segment path.
 AiModel.find_or_create_by!(ai_provider: azure_foundry_provider, api_model_id: "mai-transcribe-1.5") do |m|
   m.display_name = "MAI-Transcribe 1.5 (Azure Foundry)"
   m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
