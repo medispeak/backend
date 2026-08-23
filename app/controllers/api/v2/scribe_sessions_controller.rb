@@ -401,19 +401,12 @@ module Api
 
         fingerprint = "commit:#{session.id}"
         with_idempotency(fingerprint) do
-          # ATOMICALLY claim the commit. A check-then-act status guard let two
-          # racing commits (a session token carries no Idempotency-Key, so
-          # with_idempotency is a no-op there) both pass and both enqueue the
-          # pipeline — double processing + duplicate Transcript rows. A single
-          # conditional UPDATE lets exactly ONE request transition a committable
-          # session to processing; the losers see zero rows and 409. created and
-          # uploading are first commits; failed and partial re-commit to retry
-          # the not-yet-successful outputs (Orchestrator skips successful ones).
+          # created and uploading are first commits; failed and partial re-commit
+          # to retry the not-yet-successful outputs (Orchestrator skips the
+          # successful ones). The claim also dedupes racing commits — a session
+          # token carries no Idempotency-Key, so with_idempotency is a no-op there.
           original_status = session.status
-          claimed = ScribeSession
-                    .where(id: session.id, status: %w[created uploading failed partial])
-                    .update_all(status: "processing", updated_at: Time.current)
-          if claimed.zero?
+          unless claim_processing(session, %w[created uploading failed partial])
             render_error(
               code: "validation_error",
               message: "Session cannot be committed from status #{session.reload.status}",
@@ -422,57 +415,51 @@ module Api
             next
           end
 
-          # From here we hold the claim (status is processing, unclaimable by any
-          # other commit). ANYTHING that fails now — the quota hold raising on a
-          # lock-wait timeout/deadlock under concurrent commits, or the enqueue
-          # failing — must roll the claim back, or the session is wedged in
-          # processing and every future commit 409s forever. Revert then re-raise
-          # (the global handler renders a sanitized 500; the session is
-          # re-committable).
-          begin
-            estimate = commit_estimate(session)
-
-            # Usage-limit admission gate (per-user daily caps, org budgets, ...)
-            # — distinct from the credit ledger below so clients can message
-            # "limit reached" differently from "out of credit".
-            limit_check = Metering::LimitGuard.check(
-              account: session.account,
-              user: session.user,
-              estimated_cost: estimate
-            )
-            unless limit_check.ok?
-              revert_commit_claim(session, original_status)
-              violation = limit_check.violation.limit
-              render_error(
-                code: "usage_limit_exceeded",
-                message: "#{violation.period.capitalize} #{violation.metric} limit reached for this #{violation.scope == 'per_user' ? 'user' : 'account'}",
-                status: :payment_required
-              )
-              next
-            end
-
-            # Meter against the session's own account. For a scoped session token
-            # current_account is nil, so sourcing it from the session keeps the
-            # quota hold correct without widening the token's reach.
-            token = Metering::QuotaGuard.hold!(account: session.account, estimate: estimate)
-            unless token.ok?
-              revert_commit_claim(session, original_status)
-              render_error(
-                code: "insufficient_credit",
-                message: "Account has insufficient credit to process this session",
-                status: :payment_required
-              )
-              next
-            end
-
-            ProcessScribeSessionJob.perform_later(session.id)
-          rescue StandardError
-            revert_commit_claim(session, original_status)
-            raise
-          end
+          next unless admit_and_enqueue(session, original_status)
 
           render json: serialize(session.reload), status: :accepted
         end
+      end
+
+      # POST /api/v2/scribe_sessions/:id/retry
+      #
+      #   { "scope": "structuring" | "transcription", "transcript": "..." }
+      #
+      # Re-runs a finished session through commit's own claim -> hold -> enqueue
+      # path; Scribe::RetryPreparer owns what gets invalidated. Deliberately not
+      # under with_idempotency (a retry asks for a DIFFERENT answer than the
+      # stored one) and not behind reject_expired (nothing is uploaded, and a
+      # wrong field must stay fixable after the 24h upload window closes).
+      def retry_session
+        session = find_session
+        return unless session
+
+        preparer = Scribe::RetryPreparer.new(
+          session: session,
+          scope: params[:scope],
+          transcript: params[:transcript],
+          user: acting_user(session)
+        )
+        if (error = preparer.validate)
+          render_error(**error)
+          return
+        end
+
+        original_status = session.status
+        unless claim_processing(session, Scribe::RetryPreparer::RETRYABLE_STATUSES)
+          render_error(
+            code: "validation_error",
+            message: "Session cannot be retried from status #{session.reload.status}",
+            status: :conflict
+          )
+          return
+        end
+
+        # The reset is destructive, so it runs only once the spend is admitted —
+        # a retry refused for limits/credit must leave the stored answer intact.
+        return unless admit_and_enqueue(session, original_status) { preparer.call }
+
+        render json: serialize(session.reload), status: :accepted
       end
 
       # POST /api/v2/scribe_sessions/:id/tokens  (account token only)
@@ -679,6 +666,64 @@ module Api
         ScribeSession.where(id: session.id).update_all(status: original_status, updated_at: Time.current)
       end
 
+      # ATOMIC claim shared by commit and retry: a conditional UPDATE lets
+      # exactly one request move the session into processing (a check-then-act
+      # guard let two racing requests both enqueue the pipeline).
+      def claim_processing(session, from_statuses)
+        ScribeSession.where(id: session.id, status: from_statuses)
+                     .update_all(status: "processing", updated_at: Time.current)
+                     .positive?
+      end
+
+      # Admission + enqueue shared by commit and retry: the usage-limit gate,
+      # then the credit hold, then the pipeline job. Renders the refusal,
+      # reverts the claim and returns false when not admitted; yields between
+      # hold and enqueue so retry applies its destructive reset only once the
+      # spend is authorized. Account comes from the session, not
+      # current_account, which is nil for a scoped session token.
+      def admit_and_enqueue(session, original_status)
+        estimate = commit_estimate(session)
+
+        limit_check = Metering::LimitGuard.check(
+          account: session.account, user: session.user, estimated_cost: estimate
+        )
+        unless limit_check.ok?
+          revert_commit_claim(session, original_status)
+          render_limit_violation(limit_check)
+          return false
+        end
+
+        hold = Metering::QuotaGuard.hold!(account: session.account, estimate: estimate)
+        unless hold.ok?
+          revert_commit_claim(session, original_status)
+          render_error(
+            code: "insufficient_credit",
+            message: "Account has insufficient credit to process this session",
+            status: :payment_required
+          )
+          return false
+        end
+
+        yield if block_given?
+        ProcessScribeSessionJob.perform_later(session.id)
+        true
+      rescue StandardError
+        # Anything failing while we hold the claim must roll it back, or the
+        # session wedges in :processing and every future commit/retry 409s.
+        revert_commit_claim(session, original_status)
+        raise
+      end
+
+      def render_limit_violation(limit_check)
+        violation = limit_check.violation.limit
+        render_error(
+          code: "usage_limit_exceeded",
+          message: "#{violation.period.capitalize} #{violation.metric} limit reached " \
+                   "for this #{violation.scope == 'per_user' ? 'user' : 'account'}",
+          status: :payment_required
+        )
+      end
+
       # A conservative, non-zero credit estimate for the commit hold, sized from
       # the real audio duration (plan 001's Scribe::AudioDuration). Final cost is
       # settled at deduct!; this only needs to be positive and roughly
@@ -744,6 +789,12 @@ module Api
           return nil
         end
         session
+      end
+
+      # Who a transcript correction is attributed to: the session's clinician,
+      # else the token's owner (mirrors Metering::UsageRecorder's attribution).
+      def acting_user(session)
+        session.user || current_api_token&.user
       end
 
       # Renders the shared 410 session_expired envelope and returns true when the

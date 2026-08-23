@@ -370,12 +370,10 @@ module Scribe
     end
 
     # One UsageEvent, function :ocr — the call IS the OCR call, and keying it
-    # :ocr keeps ocr_attempt_number, the per-page price component and the
-    # existing ledger semantics intact. Keyed explicitly rather than through
-    # dedupe_key_for's per-output branch, which carries no attempt counter.
-    # Keyed with no scribe_output, so dedupe_key_for yields the per-attempt
-    # "{session}:ocr:{n}" form rather than the output-keyed one, which carries
-    # no attempt counter.
+    # :ocr keeps attempt_number, the per-page price component and the existing
+    # ledger semantics intact. Passed with no scribe_output so dedupe_key_for
+    # yields the per-attempt "{session}:ocr:{n}" form rather than the
+    # output-keyed one.
     def meter_combined(stage)
       meter(function: :ocr, stage: stage, usage: usage_with_pages(stage.usage))
     end
@@ -686,29 +684,34 @@ module Scribe
     # stable contract for the index — see plan 004.
     def dedupe_key_for(function, scribe_output)
       if scribe_output
-        "#{session.id}:#{scribe_output.id}:#{function}"
+        suffixed("#{session.id}:#{scribe_output.id}:#{function}", scribe_output.attempt)
       elsif function == :ocr
-        "#{session.id}:ocr:#{ocr_attempt_number}"
+        "#{session.id}:ocr:#{attempt_number(:ocr)}"
+      elsif function == :asr
+        suffixed("#{session.id}:asr", attempt_number(:asr))
       else
         "#{session.id}:#{function}"
       end
     end
 
-    # OCR is metered once per PHYSICAL attempt, which is the pipeline's stated
-    # metering contract (see this class's header). A re-commit of a failed
-    # document session finds no transcript, runs OCR again, and is charged again
-    # by the provider — but a key of "{session}:ocr" collided with the first
-    # attempt's row on the unique (api_token_id, dedupe_key) index, and the
-    # RecordNotUnique was swallowed by the best-effort #meter. Every retry after
-    # the first was therefore real provider spend billed to nobody.
-    #
-    # Counting prior attempts is safe rather than racy: commit's atomic claim
-    # (only one request may move a session to :processing) makes the orchestrator
-    # single-flight per session. A job retry that re-runs a SETTLED attempt still
-    # short-circuits earlier, at `session.transcript.present?`, so it never
-    # reaches here and cannot double-bill.
-    def ocr_attempt_number
-      session.usage_events.where(function: "ocr").count
+    # Attempt 0 keeps the bare key it has always had, so a session already in
+    # flight when this shipped keeps deduping against its own earlier rows
+    # rather than being billed twice across the deploy.
+    def suffixed(base, attempt)
+      attempt.to_i.zero? ? base : "#{base}:#{attempt.to_i}"
+    end
+
+    # Physical attempts of this whole-session function already run; the count
+    # keys the next attempt so a rerun cannot collide with the first row on the
+    # unique (api_token_id, dedupe_key) index (a swallowed RecordNotUnique in
+    # #meter billed real spend to nobody). Segment rows are excluded because
+    # TranscribeSegmentJob also writes function "asr", keyed per segment.
+    # Race-safe: commit's claim makes the orchestrator single-flight per session.
+    def attempt_number(function)
+      session.usage_events
+             .where(function: function.to_s)
+             .where("COALESCE(dedupe_key, '') NOT LIKE ?", "%:segment:%")
+             .count
     end
 
     # Key for a billed-but-unusable attempt of a function that is not metered
