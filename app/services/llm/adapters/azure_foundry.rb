@@ -21,7 +21,10 @@ module Llm
     class AzureFoundry < Llm::Adapter
       TRANSCRIBE_PATH = "/speechtotext/transcriptions:transcribe".freeze
       # The preview version the LLM Speech API is pinned to today; overridable
-      # via options[:api_version] so an Azure version bump is a config edit.
+      # via options[:azure_api_version] so an Azure version bump is a config
+      # edit. Namespaced like sarvam_mode because ConfigResolver forwards the
+      # primary's options to the fallback config — a bare api_version key would
+      # be picked up by an openai_compatible fallback and 404 it.
       DEFAULT_API_VERSION = "2025-10-15".freeze
 
       # audio extension -> a content-type on Azure's accepted-format list.
@@ -42,8 +45,8 @@ module Llm
         # A 200 that is not a transcription payload (HTML gateway page, an
         # unexpected JSON shape) would surface as an empty transcript; route it
         # through the transient fallback machinery instead. combinedPhrases is
-        # always present on a real response — it is [] for pure silence.
-        unless body.is_a?(Hash) && body.key?("combinedPhrases")
+        # always an array on a real response — it is [] for pure silence.
+        unless body.is_a?(Hash) && body["combinedPhrases"].is_a?(Array)
           raise Llm::BadResponse, "non-transcription response from Azure Foundry"
         end
 
@@ -105,7 +108,7 @@ module Llm
       end
 
       def api_version
-        config.options[:api_version].presence || DEFAULT_API_VERSION
+        CGI.escape(config.options[:azure_api_version].presence || DEFAULT_API_VERSION)
       end
 
       def file_part(audio_io)

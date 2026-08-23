@@ -110,12 +110,20 @@ class AzureFoundryAdapterTest < ActiveSupport::TestCase
     assert_in_delta 57.187, result.usage.audio_seconds, 0.0001
   end
 
-  test "options api_version overrides the pinned preview api-version" do
+  test "options azure_api_version overrides the pinned preview api-version" do
     url = "#{ENDPOINT}?api-version=2026-06-01"
     stub_ok(url: url)
-    adapter(config(options: { api_version: "2026-06-01" })).transcribe(audio, mode: :transcribe)
+    adapter(config(options: { azure_api_version: "2026-06-01" })).transcribe(audio, mode: :transcribe)
 
     assert_requested(:post, url)
+  end
+
+  test "a 200 whose combinedPhrases is not an array maps to BadResponse" do
+    stub_request(:post, URL).to_return(
+      status: 200, headers: { "Content-Type" => "application/json" },
+      body: { combinedPhrases: "hello world" }.to_json
+    )
+    assert_raises(Llm::BadResponse) { adapter.transcribe(audio, mode: :transcribe) }
   end
 
   test "an empty combinedPhrases is a silent segment, not an error" do

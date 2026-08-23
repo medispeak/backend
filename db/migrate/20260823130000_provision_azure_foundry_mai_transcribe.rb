@@ -5,7 +5,10 @@
 class ProvisionAzureFoundryMaiTranscribe < ActiveRecord::Migration[8.1]
   # base_url is per-resource (unlike Sarvam/OpenAI there is no universal host),
   # so it comes from ENV, with a placeholder so the row shows in the admin UI.
-  PLACEHOLDER_BASE_URL = "https://your-resource.cognitiveservices.azure.com".freeze
+  # RFC 2606 .invalid: a *.cognitiveservices.azure.com placeholder would be a
+  # claimable subdomain — assigning the model before fixing the URL would send
+  # the key + patient audio to whoever registered it. .invalid never resolves.
+  PLACEHOLDER_BASE_URL = "https://azure-foundry.invalid".freeze
 
   def up
     provider = AiProvider.find_or_create_by!(name: "Azure Foundry") do |p|

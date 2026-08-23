@@ -309,10 +309,12 @@ end
 
 # Azure Foundry: Microsoft's MAI-Transcribe STT served by a Foundry Speech
 # resource's LLM Speech API. base_url is per-resource, so it comes from ENV
-# (placeholder otherwise so the row shows in the admin UI). Key from ENV.
+# (placeholder otherwise so the row shows in the admin UI — RFC 2606 .invalid,
+# never a claimable *.azure.com name, so a misconfigured row can't leak the
+# key or audio to a third party). Key from ENV.
 azure_foundry_provider = AiProvider.find_or_create_by!(name: "Azure Foundry") do |p|
   p.kind = "azure_foundry"
-  p.base_url = ENV["AZURE_FOUNDRY_BASE_URL"].presence || "https://your-resource.cognitiveservices.azure.com"
+  p.base_url = ENV["AZURE_FOUNDRY_BASE_URL"].presence || "https://azure-foundry.invalid"
   p.api_key = ENV["AZURE_FOUNDRY_API_KEY"] if ENV["AZURE_FOUNDRY_API_KEY"].present?
 end
 
