@@ -26,7 +26,7 @@ The provider abstraction lives in `app/services/llm/`.
 | `Llm::DefaultConfigProvider` | ENV-based fallback `Config` (OpenAI defaults: `whisper-1` for ASR, `gpt-4o-mini` for structuring and OCR) when no `ModelAssignment` exists. |
 | `Llm::Caller`             | The **single owner of fallback**. Tries the primary config; on a transient error (`Timeout`/`RateLimited`/`BadResponse`) tries `config.fallback` once. Refusals are not retried. |
 | `Llm::Registry`           | Maps a provider kind to its adapter class. |
-| `Llm::Adapter` (+ `adapters/`) | Abstract base + concrete adapters (`OpenaiCompatible`, `Anthropic`, `Sarvam`). Each exposes `#transcribe`, `#structure`, and `#ocr` (vision-capable adapters only — others raise), and maps `Faraday::Error` to the `Llm::Error` hierarchy. |
+| `Llm::Adapter` (+ `adapters/`) | Abstract base + concrete adapters (`OpenaiCompatible`, `Anthropic`, `Sarvam`, `AzureFoundry`). Each exposes `#transcribe`, `#structure`, and `#ocr` (vision-capable adapters only — others raise), and maps `Faraday::Error` to the `Llm::Error` hierarchy. |
 | `Llm::Result` / `Llm::Usage` | Normalized result + usage structs so callers never inspect provider-specific JSON. |
 
 **Adapters** translate one normalized contract to each provider:

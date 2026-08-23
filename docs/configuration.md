@@ -20,7 +20,7 @@ A provider endpoint and its credentials.
 | Attribute         | Notes |
 |-------------------|-------|
 | `name`            | Human label. |
-| `kind`            | `openai_compatible`, `anthropic`, or `gemini`. |
+| `kind`            | `openai_compatible`, `anthropic`, `sarvam`, or `azure_foundry`. (Gemini rides `openai_compatible` via its OpenAI-compatible endpoint.) |
 | `base_url`        | The endpoint host root (see note below). |
 | `api_key`         | Active Record **encrypted** column. |
 | `organization_id` | Optional (OpenAI org id). |
@@ -36,6 +36,9 @@ A provider endpoint and its credentials.
   `options: { api_version: "" }` on the assignment so nothing is appended.)
 - For `anthropic`, the adapter POSTs to `base_url + "/v1/messages"`, so
   `base_url` is `https://api.anthropic.com`.
+- For `azure_foundry`, `base_url` is your Foundry Speech resource root, e.g.
+  `https://your-resource.cognitiveservices.azure.com`; the adapter appends
+  `/speechtotext/transcriptions:transcribe`.
 
 > "Run your own model" is simply an `openai_compatible` provider whose `base_url`
 > points at your server, e.g. `http://localhost:8000/`.
@@ -256,6 +259,36 @@ whisper = selfhost.ai_models.create!(api_model_id: "whisper-large-v3",
 ModelAssignment.create!(scope_type: "System", function: "asr",         ai_model: whisper)
 ModelAssignment.create!(scope_type: "System", function: "structuring", ai_model: claude)
 ```
+
+### MAI-Transcribe 1.5 (Azure Foundry) ASR with entity biasing
+
+```ruby
+azure = AiProvider.create!(name: "Azure Foundry", kind: "azure_foundry",
+                           base_url: "https://your-resource.cognitiveservices.azure.com",
+                           api_key: ENV["AZURE_FOUNDRY_API_KEY"], active: true)
+mai = azure.ai_models.create!(api_model_id: "mai-transcribe-1.5",
+                              capabilities: { accepts_audio: true, can_transcribe: true },
+                              active: true)
+
+# phrase_list biases recognition toward domain vocabulary (drug names, staff
+# names); transcribe_style: "verbatim" keeps fillers and disfluencies.
+# fallback_ai_model matters: MAI accepts WAV/Ogg-Opus/MP3/FLAC but rejects the
+# browser recorder's WebM/Opus (verified live), so segment-path audio must be
+# able to fall back to a WebM-capable provider (Whisper/Sarvam).
+ModelAssignment.create!(scope_type: "System", function: "asr", ai_model: mai,
+                        fallback_ai_model: whisper,
+                        options: { phrase_list: [ "Dolo 650", "Metformin" ] })
+```
+
+Adding another Foundry model is a data change, never a code change:
+
+- **Speech models** (a future `mai-transcribe-2`, …): add an `AiModel` under the
+  same provider — its `api_model_id` is sent as the LLM Speech API's
+  `enhancedMode.model`.
+- **Chat/vision deployments** (the gpt-4o family, …) on the same Foundry
+  resource speak the OpenAI-compatible surface: use an `openai_compatible`
+  provider with `base_url: "https://your-resource.services.ai.azure.com/openai/"`
+  (the client appends `/v1`) and the deployment name as `api_model_id`.
 
 ### Important constraints
 

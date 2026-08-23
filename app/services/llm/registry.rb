@@ -6,7 +6,8 @@ module Llm
     ADAPTERS = {
       openai_compatible: "Llm::Adapters::OpenaiCompatible",
       anthropic: "Llm::Adapters::Anthropic",
-      sarvam: "Llm::Adapters::Sarvam"
+      sarvam: "Llm::Adapters::Sarvam",
+      azure_foundry: "Llm::Adapters::AzureFoundry"
     }.freeze
 
     def self.adapter_for(config)

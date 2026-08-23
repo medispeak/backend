@@ -1,7 +1,7 @@
 class AiProvider < ApplicationRecord
   # gemini has no adapter; Gemini models are reachable through their
   # OpenAI-compatible endpoint as an openai_compatible provider row.
-  KINDS = %w[openai_compatible anthropic sarvam].freeze
+  KINDS = %w[openai_compatible anthropic sarvam azure_foundry].freeze
 
   # API key encrypted at rest (Active Record Encryption).
   encrypts :api_key
