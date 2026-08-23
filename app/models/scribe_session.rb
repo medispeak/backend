@@ -1,24 +1,7 @@
-require "resolv"
-require "ipaddr"
-
 class ScribeSession < ApplicationRecord
   # Which of this session's stored audio can actually be played back, and in
   # what order. See the concern for why that is not simply "the attachments".
   include AudioPlayback
-
-  # Ranges a webhook must never target: loopback, RFC-1918 private, link-local
-  # (incl. 169.254.169.254 cloud metadata), unspecified, and IPv6 equivalents.
-  BLOCKED_IP_RANGES = [
-    IPAddr.new("127.0.0.0/8"),
-    IPAddr.new("10.0.0.0/8"),
-    IPAddr.new("172.16.0.0/12"),
-    IPAddr.new("192.168.0.0/16"),
-    IPAddr.new("169.254.0.0/16"),
-    IPAddr.new("0.0.0.0/8"),
-    IPAddr.new("::1"),
-    IPAddr.new("fc00::/7"),
-    IPAddr.new("fe80::/10")
-  ].freeze
 
   belongs_to :account
   belongs_to :api_token, optional: true
@@ -125,53 +108,19 @@ class ScribeSession < ApplicationRecord
 
   private
 
+  # First line only: the address is re-checked and pinned at delivery time,
+  # because DNS can change between here and then (Scribe::WebhookTarget).
   def callback_url_is_safe
     return if callback_url.blank?
 
-    uri = parse_https_uri(callback_url)
+    uri = Scribe::WebhookTarget.https_uri(callback_url)
     unless uri
       errors.add(:callback_url, "must be a valid https URL")
       return
     end
 
-    if unsafe_host?(uri.hostname)
+    if Scribe::WebhookTarget.unsafe_host?(uri.hostname)
       errors.add(:callback_url, "must not point to a private, loopback, or link-local address")
     end
-  end
-
-  def parse_https_uri(value)
-    uri = URI.parse(value)
-    return nil unless uri.is_a?(URI::HTTPS) && uri.hostname.present?
-
-    uri
-  rescue URI::InvalidURIError
-    nil
-  end
-
-  # A literal IP is checked directly; a hostname is resolved via DNS. An
-  # unresolvable host resolves to [] and is treated as safe (it can reach
-  # nothing internal).
-  def unsafe_host?(host)
-    ip_candidates(host).any? { |ip| blocked_ip?(ip) }
-  end
-
-  def ip_candidates(host)
-    IPAddr.new(host) # raises unless host is already a literal IP
-    [ host ]
-  rescue IPAddr::InvalidAddressError
-    resolve_addresses(host)
-  end
-
-  def resolve_addresses(host)
-    Resolv.getaddresses(host)
-  rescue StandardError
-    []
-  end
-
-  def blocked_ip?(address)
-    ip = IPAddr.new(address)
-    BLOCKED_IP_RANGES.any? { |range| range.include?(ip) }
-  rescue IPAddr::InvalidAddressError
-    false
   end
 end
