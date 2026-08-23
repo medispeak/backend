@@ -25,6 +25,11 @@ class TranscribeSegmentJob < ApplicationJob
     segment = ScribeTranscriptSegment.find_by(id: segment_id)
     return if segment.nil?
 
+    # The attempt this run owns. ProcessScribeSessionJob's stale-claim reclaim
+    # bumps it to hand the segment to a fresh run, so every write below is
+    # scoped to it: a run that was superseded mid-provider-call must not
+    # overwrite the newer result with its own stale one.
+    attempt = segment.attempt
     session = segment.scribe_session
     config = Llm::ConfigResolver.call(function: :asr, account: session.account)
     blob = segment.data.blob
@@ -39,26 +44,46 @@ class TranscribeSegmentJob < ApplicationJob
       )
     end
 
-    segment.update!(
+    written = owned(segment_id, attempt).update_all(
       text: result.text,
       language: result.language,
       provider: result.provider,
       model: result.model,
       duration_seconds: result.duration_seconds,
       transcribed_at: Time.current,
-      status: "done"
+      status: "done",
+      updated_at: Time.current
     )
 
-    meter_segment(session, segment, result)
+    if written.zero?
+      Rails.logger.warn(
+        "TranscribeSegmentJob discarded a superseded result for segment=#{segment_id} attempt=#{attempt}"
+      )
+    end
+
+    # Metered either way: the provider call happened and its spend is real. The
+    # key carries this run's attempt, so the run that superseded it bills
+    # separately instead of colliding and hiding one of the two calls.
+    meter_segment(session, segment, result, attempt)
   rescue StandardError => e
     # Mark failed via update_all so this is robust whether or not `segment` was
-    # loaded, and swallow — no infinite retry.
-    ScribeTranscriptSegment.where(id: segment_id).update_all(status: "failed", updated_at: Time.current)
+    # loaded, and swallow — no infinite retry. Scoped to the claimed attempt so
+    # a superseded run cannot fail a segment another run is transcribing.
+    if attempt
+      owned(segment_id, attempt).update_all(status: "failed", updated_at: Time.current)
+    else
+      ScribeTranscriptSegment.where(id: segment_id).update_all(status: "failed", updated_at: Time.current)
+    end
     Rails.logger.error("TranscribeSegmentJob failed for segment=#{segment_id}: #{e.class}: #{e.message}")
     nil
   end
 
   private
+
+  # The segment only while this run still holds the claim it took.
+  def owned(segment_id, attempt)
+    ScribeTranscriptSegment.where(id: segment_id, attempt: attempt, status: "transcribing")
+  end
 
   # Downloads the segment blob into a Tempfile that carries a REAL audio
   # extension (never ".bin", which Whisper rejects) and always closes it. Reuses
@@ -82,43 +107,18 @@ class TranscribeSegmentJob < ApplicationJob
   # NEVER place a credit reservation or hard-block here. A credit check must not
   # reject a segment mid-recording; billing is settled against the commit-time
   # reservation.
-  def meter_segment(session, segment, result)
+  def meter_segment(session, segment, result, attempt)
     event = Metering::UsageRecorder.record(
       account: session.account,
       function: :asr,
-      result: as_llm_result(result),
+      result: Llm::Result.from_stage(result),
       api_token: session.api_token,
       scribe_session: session,
-      dedupe_key: segment_dedupe_key(session, segment)
+      dedupe_key: Metering::DedupeKey.segment(session.id, segment.id, attempt)
     )
     Metering::QuotaGuard.deduct!(event)
   rescue StandardError => e
     Rails.logger.error("TranscribeSegmentJob metering failed for segment=#{segment.id}: #{e.class}: #{e.message}")
     nil
-  end
-
-  # A re-transcribed segment (attempt bumped by Scribe::RetryPreparer) is a new
-  # physical provider call and needs its own key on the unique
-  # (api_token_id, dedupe_key) index; attempt 0 keeps the historical bare key.
-  def segment_dedupe_key(session, segment)
-    base = "#{session.id}:segment:#{segment.id}:asr"
-    segment.attempt.to_i.zero? ? base : "#{base}:#{segment.attempt.to_i}"
-  end
-
-  # Adapts AsrStage::Result to the Llm::Result contract Metering::UsageRecorder
-  # consumes (matches Orchestrator#as_llm_result). Per-segment latency is the
-  # only ASR timing a live recording produces — the whole-file path never runs —
-  # so dropping it here would leave every streamed session with no ASR timing.
-  def as_llm_result(result)
-    Llm::Result.new(
-      text: result.text,
-      structured: nil,
-      model: result.model,
-      provider: result.provider,
-      usage: result.usage,
-      latency_ms: result.respond_to?(:latency_ms) ? result.latency_ms : nil,
-      finish_reason: nil,
-      raw: result.respond_to?(:raw) ? result.raw : nil
-    )
   end
 end
