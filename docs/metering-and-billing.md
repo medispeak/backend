@@ -77,8 +77,10 @@ provider/model you bill.
 - **`hold!(account:, estimate:)`** — placed at commit. Inside a row-locked
   transaction it checks `balance - estimate >= 0`; if so it inserts a `hold`
   transaction and returns an `ok?` token, otherwise returns a not-ok token.
-  (Note: v2 `commit` currently calls `hold!` with `estimate: 0` because the
-  per-minute cost is not yet known at commit time.)
+  v2 `commit` sizes the estimate conservatively from what it already knows —
+  audio duration, or document page count — with a floor of
+  `COMMIT_ESTIMATE_MIN_MINUTES`, so an account without the credit to run the
+  session is refused at commit rather than after the provider has been paid.
 - **`deduct!(usage_event)`** — on finalize, inside a row-locked transaction it
   inserts a `deduction` transaction for the event's cost and lowers the balance.
 - **`refund!(usage_event)`** — inserts a `refund` transaction and raises the
