@@ -267,6 +267,9 @@ module Scribe
       nil
     end
 
+    # Anthropic structures via a forced tool call whose input_schema is the
+    # schema itself (see Llm::Adapters::Anthropic), so it needs no json_schema
+    # response format the way the OpenAI-compatible adapter does.
     def structuring_capable?(config)
       return false unless config.capability?(:can_structure)
       return true if config.provider_kind == :anthropic
@@ -667,7 +670,7 @@ module Scribe
       event = Metering::UsageRecorder.record(
         account: session.account,
         function: function,
-        result: as_llm_result(stage, usage: usage),
+        result: Llm::Result.from_stage(stage, usage: usage),
         api_token: session.api_token,
         scribe_session: session,
         scribe_output: scribe_output,
@@ -677,33 +680,26 @@ module Scribe
       event
     end
 
-    # Deterministic dedupe_key so the unique (api_token_id, dedupe_key) index
-    # turns a retried finalize into a no-op instead of a duplicate UsageEvent.
-    # A duplicate insert raises ActiveRecord::RecordNotUnique, which the
+    # Deterministic dedupe_key so the unique index behind usage_events turns a
+    # retried finalize into a no-op instead of a duplicate UsageEvent. A
+    # duplicate insert raises ActiveRecord::RecordNotUnique, which the
     # best-effort #meter rescue swallows without demoting the output. Format is a
-    # stable contract for the index — see plan 004.
+    # stable contract for the index — see plan 004 and Metering::DedupeKey.
     def dedupe_key_for(function, scribe_output)
       if scribe_output
-        suffixed("#{session.id}:#{scribe_output.id}:#{function}", scribe_output.attempt)
+        Metering::DedupeKey.suffixed("#{session.id}:#{scribe_output.id}:#{function}", scribe_output.attempt)
       elsif function == :ocr
         "#{session.id}:ocr:#{attempt_number(:ocr)}"
       elsif function == :asr
-        suffixed("#{session.id}:asr", attempt_number(:asr))
+        Metering::DedupeKey.suffixed("#{session.id}:asr", attempt_number(:asr))
       else
         "#{session.id}:#{function}"
       end
     end
 
-    # Attempt 0 keeps the bare key it has always had, so a session already in
-    # flight when this shipped keeps deduping against its own earlier rows
-    # rather than being billed twice across the deploy.
-    def suffixed(base, attempt)
-      attempt.to_i.zero? ? base : "#{base}:#{attempt.to_i}"
-    end
-
     # Physical attempts of this whole-session function already run; the count
     # keys the next attempt so a rerun cannot collide with the first row on the
-    # unique (api_token_id, dedupe_key) index (a swallowed RecordNotUnique in
+    # unique dedupe_key index (a swallowed RecordNotUnique in
     # #meter billed real spend to nobody). Segment rows are excluded because
     # TranscribeSegmentJob also writes function "asr", keyed per segment.
     # Race-safe: commit's claim makes the orchestrator single-flight per session.
@@ -720,25 +716,6 @@ module Scribe
     def failed_dedupe_key_for(function)
       failed = session.usage_events.where(function: function.to_s, status: "failed").count
       "#{session.id}:#{function}:failed:#{failed}"
-    end
-
-    # Adapts a stage result struct to the Llm::Result contract the meter reads.
-    # The stage structs carry latency_ms (ASR/OCR from the adapter, structuring
-    # timed across the whole stage so a repair re-ask is counted), so it reaches
-    # usage_events; the respond_to? guard remains for any struct that does not.
-    # `usage` overrides the stage's own — a combined run grafts the page count
-    # on, which only OcrStage does for itself.
-    def as_llm_result(stage, usage: nil)
-      Llm::Result.new(
-        text: stage.respond_to?(:text) ? stage.text : nil,
-        structured: stage.respond_to?(:structured) ? stage.structured : nil,
-        model: stage.model,
-        provider: stage.provider,
-        usage: usage || stage.usage,
-        latency_ms: stage.respond_to?(:latency_ms) ? stage.latency_ms : nil,
-        finish_reason: stage.respond_to?(:finish_reason) ? stage.finish_reason : nil,
-        raw: stage.respond_to?(:raw) ? stage.raw : nil
-      )
     end
 
     # completed: every output succeeded.

@@ -103,4 +103,35 @@ class MeteringPriceBookTest < ActiveSupport::TestCase
 
     assert_equal result[:cost], result[:cost].round(6)
   end
+
+  # The value lands in a decimal column and is settled against the decimal
+  # credit ledger, so it must not arrive as an inexact binary float.
+  test "returns an exact decimal, not a float" do
+    create(:model_price, provider: "openai", model: "gpt-4o-mini",
+                         input_per_million: 0.1, output_per_million: 0.2)
+    usage = Llm::Usage.new(input_tokens: 1_000_000, output_tokens: 1_000_000)
+
+    result = Metering::PriceBook.cost(function: :structuring, provider: "openai",
+                                      model: "gpt-4o-mini", usage: usage)
+
+    assert_kind_of BigDecimal, result[:cost]
+    # 0.1 + 0.2 is 0.30000000000000004 in binary floating point.
+    assert_equal BigDecimal("0.3"), result[:cost]
+  end
+
+  # Postgres sorts NULLs FIRST for DESC, so an undated "in force from the start"
+  # row outranked every dated one and a newly effective price never applied
+  # until somebody remembered to deprecate the old row.
+  test "a newer dated price wins over an undated one" do
+    create(:model_price, provider: "openai", model: "gpt-4o-mini",
+                         input_per_million: 1.0, output_per_million: 0, effective_at: nil)
+    create(:model_price, provider: "openai", model: "gpt-4o-mini",
+                         input_per_million: 2.0, output_per_million: 0, effective_at: 1.day.ago)
+    usage = Llm::Usage.new(input_tokens: 1_000_000)
+
+    result = Metering::PriceBook.cost(function: :structuring, provider: "openai",
+                                      model: "gpt-4o-mini", usage: usage)
+
+    assert_equal BigDecimal("2"), result[:cost]
+  end
 end

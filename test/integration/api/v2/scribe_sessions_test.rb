@@ -227,6 +227,45 @@ module Api
         end
       end
 
+      # The key is claimed before the action runs, so a second request arriving
+      # while the first is still in flight is refused instead of creating its
+      # own billable session. Reading first and writing after let both execute.
+      test "a request arriving while the same key is in flight is refused" do
+        payload = { outputs: [ { type: "form", page_id: @page.id } ] }.to_json
+        idem_headers = @headers.merge(
+          "Content-Type" => "application/json",
+          "Idempotency-Key" => "in-flight-1"
+        )
+
+        # Stands in for the winner mid-action: the key is claimed, no response
+        # stored yet.
+        IdempotencyKey.create!(api_token: @token, key: "in-flight-1",
+                               request_fingerprint: Digest::SHA256.hexdigest(payload),
+                               expires_at: 24.hours.from_now)
+
+        assert_no_difference -> { ScribeSession.count } do
+          post "/api/v2/scribe_sessions", params: payload, headers: idem_headers
+        end
+
+        assert_response :conflict
+        assert_equal "idempotency_in_progress", JSON.parse(response.body).dig("error", "code")
+      end
+
+      test "a failed action releases the key so the client can retry" do
+        idem_headers = @headers.merge(
+          "Content-Type" => "application/json",
+          "Idempotency-Key" => "released-1"
+        )
+
+        Scribe::SessionBuilder.any_instance.stubs(:call).raises(StandardError, "boom")
+        post "/api/v2/scribe_sessions",
+             params: { outputs: [ { type: "form", page_id: @page.id } ] }.to_json,
+             headers: idem_headers
+
+        assert_nil IdempotencyKey.find_by(api_token: @token, key: "released-1"),
+                   "a key whose action never completed must not stay claimed"
+      end
+
       test "idempotent create with a different body returns 409 conflict" do
         idem_headers = @headers.merge(
           "Content-Type" => "application/json",

@@ -1,0 +1,25 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/medispeak/backend/security/advisories/new
+    about: >-
+      Do NOT open a public issue for a security problem. Use GitHub's private
+      vulnerability reporting ("Report a vulnerability" under the Security tab).
+      See SECURITY.md for scope, our 72-hour acknowledgement target, and the
+      email fallback.
+  - name: Security policy
+    url: https://github.com/medispeak/backend/blob/main/SECURITY.md
+    about: >-
+      What is in scope (tenant isolation, PHI leakage, auth/token bypass,
+      webhook SSRF, metering and billing integrity), what to include in a
+      report, and what not to do while testing.
+  - name: Documentation
+    url: https://github.com/medispeak/backend/blob/main/README.md
+    about: >-
+      Setup, the v2 API reference, model configuration, architecture, and
+      metering and billing — check here before filing.
+  - name: Contributing guide
+    url: https://github.com/medispeak/backend/blob/main/CONTRIBUTING.md
+    about: >-
+      Local setup, running the test suite and the CI checks, code style, and the
+      branch and PR workflow.

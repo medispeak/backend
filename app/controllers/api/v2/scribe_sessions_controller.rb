@@ -123,29 +123,12 @@ module Api
         seq = params.require(:seq).to_i
         upload = params.require(:chunk)
 
-        # Ingress guards mirror the single-shot `audio` action so a bad part is a
-        # clean 422 here, never a 500 at commit-time reassembly. seq is a
-        # non-negative ordering index; the content-type must be an allowed audio
-        # type; and the running total across parts must stay under the session
-        # ceiling (the chunked path must not bypass plan-014's 25MB cap).
-        if seq.negative?
-          render_error(code: "validation_error", message: "seq must be >= 0", status: :unprocessable_entity)
-          return
-        end
-        if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
-          render_error(code: "validation_error", message: "chunk too large", status: :unprocessable_entity)
-          return
-        end
-        content_type = base_audio_type(upload.content_type).presence || "audio/webm"
-        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
-          render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
-          return
-        end
-        other_bytes = attached_bytes(session.audio_chunks.where.not(seq: seq))
-        if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
-          render_error(code: "audio_upload_failed", message: "total audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
-          return
-        end
+        content_type = validate_audio_part(
+          seq: seq, upload: upload,
+          siblings: session.audio_chunks.where.not(seq: seq),
+          noun: "chunk", total_label: "total audio"
+        )
+        return unless content_type
 
         return if claim_modality_or_reject(session, "audio")
 
@@ -196,30 +179,14 @@ module Api
         seq = params.require(:seq).to_i
         upload = params.require(:segment)
 
-        # Ingress guards mirror the storage `audio/chunks` action so a bad part is
-        # a clean 422 here, never a 500 in the segment job. seq is a non-negative
-        # ordering index; the content-type must be an allowed audio type; and the
-        # running total across the OTHER segments must stay under the per-session
-        # segment ceiling (reusing MAX_AUDIO_BYTES — segments are NOT counted
-        # against the storage cap).
-        if seq.negative?
-          render_error(code: "validation_error", message: "seq must be >= 0", status: :unprocessable_entity)
-          return
-        end
-        if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
-          render_error(code: "validation_error", message: "segment too large", status: :unprocessable_entity)
-          return
-        end
-        content_type = base_audio_type(upload.content_type).presence || "audio/webm"
-        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
-          render_error(code: "validation_error", message: "unsupported audio content type: #{upload.content_type}", status: :unprocessable_entity)
-          return
-        end
-        other_bytes = attached_bytes(session.transcript_segments.where.not(seq: seq))
-        if other_bytes + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
-          render_error(code: "audio_upload_failed", message: "total segment audio exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes", status: :unprocessable_entity)
-          return
-        end
+        # Segments reuse MAX_AUDIO_BYTES as their ceiling but are NOT counted
+        # against the storage cap — the two streams are summed separately.
+        content_type = validate_audio_part(
+          seq: seq, upload: upload,
+          siblings: session.transcript_segments.where.not(seq: seq),
+          noun: "segment", total_label: "total segment audio"
+        )
+        return unless content_type
 
         return if claim_modality_or_reject(session, "audio")
 
@@ -508,6 +475,44 @@ module Api
       COMMIT_ESTIMATE_RATE_PER_PAGE = 0.01
 
       private
+
+      # Ingress guards for ONE uploaded audio part, shared by the storage
+      # (`audio/chunks`) and transcription (`audio/segments`) streams so the two
+      # cannot drift: a bad part must be a clean 422 here, never a 500 at
+      # commit-time reassembly or inside the segment job.
+      #
+      # Renders the failure and returns nil when the part is rejected; otherwise
+      # returns the normalized content type. `siblings` is the rest of the same
+      # stream, whose running total must stay under the session ceiling (the
+      # part-wise paths must not bypass plan-014's 25MB cap).
+      def validate_audio_part(seq:, upload:, siblings:, noun:, total_label:)
+        if seq.negative?
+          render_error(code: "validation_error", message: "seq must be >= 0", status: :unprocessable_entity)
+          return nil
+        end
+
+        if upload.respond_to?(:size) && upload.size > MAX_CHUNK_BYTES
+          render_error(code: "validation_error", message: "#{noun} too large", status: :unprocessable_entity)
+          return nil
+        end
+
+        content_type = base_audio_type(upload.content_type).presence || "audio/webm"
+        unless ScribeSession::ALLOWED_AUDIO_TYPES.include?(content_type)
+          render_error(code: "validation_error",
+                       message: "unsupported audio content type: #{upload.content_type}",
+                       status: :unprocessable_entity)
+          return nil
+        end
+
+        if attached_bytes(siblings) + upload.size.to_i > ScribeSession::MAX_AUDIO_BYTES
+          render_error(code: "audio_upload_failed",
+                       message: "#{total_label} exceeds #{ScribeSession::MAX_AUDIO_BYTES} bytes",
+                       status: :unprocessable_entity)
+          return nil
+        end
+
+        content_type
+      end
 
       # Total stored bytes across a relation of records with a `data`
       # attachment, summed in SQL.

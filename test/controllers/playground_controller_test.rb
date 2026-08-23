@@ -285,6 +285,29 @@ class PlaygroundControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
+  # An admin's policy scope is every tenant's sessions, so resolving the id
+  # through it minted an upload-capable token for an unrelated tenant's real
+  # consultation. The session must belong to the account the run belongs to.
+  test "mint_token refuses a foreign session even for an admin" do
+    admin = create(:user, admin: true)
+    sign_in admin
+    foreign = ScribeSession.create!(account: @other_account, status: "created", expires_at: 1.hour.from_now)
+
+    post template_playground_session_token_path(@template, session_id: foreign.id)
+
+    assert_response :not_found
+  end
+
+  test "result refuses a foreign session even for an admin" do
+    admin = create(:user, admin: true)
+    sign_in admin
+    foreign = ScribeSession.create!(account: @other_account, status: "completed", expires_at: 1.hour.from_now)
+
+    get template_playground_result_path(@template, session_id: foreign.id)
+
+    assert_response :not_found
+  end
+
   # --- result ---------------------------------------------------------------
 
   test "result renders the finished outputs through the consultation partial" do

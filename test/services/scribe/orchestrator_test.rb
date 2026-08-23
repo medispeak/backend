@@ -498,4 +498,28 @@ class ScribeOrchestratorTest < ActiveSupport::TestCase
     Scribe::Orchestrator.new(session).send(:with_audio) { |io| ext = File.extname(io.path) }
     assert_equal ".webm", ext
   end
+
+  def structuring_capable?(capabilities, provider_kind: :openai_compatible)
+    config = Llm::Config.new(provider_kind: provider_kind, api_model_id: "m",
+                             base_url: "https://example.test", capabilities: capabilities)
+    Scribe::Orchestrator.new(create(:scribe_session)).send(:structuring_capable?, config)
+  end
+
+  test "an OpenAI-compatible model that enforces json_schema can structure" do
+    assert structuring_capable?({ can_structure: true, supports_json_schema: true })
+  end
+
+  # Anthropic structures via a forced tool call, so it needs can_structure but
+  # not supports_json_schema (which the seeded claude-3-5-haiku deliberately omits).
+  test "an Anthropic model can structure without json_schema" do
+    assert structuring_capable?({ can_structure: true }, provider_kind: :anthropic)
+  end
+
+  test "an OpenAI-compatible model without json_schema cannot structure" do
+    assert_not structuring_capable?({ can_structure: true })
+  end
+
+  test "a model that cannot structure at all is rejected" do
+    assert_not structuring_capable?({ supports_json_schema: true }, provider_kind: :anthropic)
+  end
 end

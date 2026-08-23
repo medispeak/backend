@@ -37,7 +37,7 @@ module Metering
         limits.each do |limit|
           next if limit.scope == "per_user" && user.nil?
 
-          used = window_usage(limit, account, user)
+          used = window_usage(limit, user: user)
           projected = used + (limit.metric == "cost" ? estimated_cost.to_d : 0)
 
           # Block at the cap: token caps carry no pre-flight estimate, so >=
@@ -52,15 +52,18 @@ module Metering
         Result.new(ok: true)
       end
 
-      private
-
-      def window_usage(limit, account, user)
+      # What this limit has consumed in the current window. PUBLIC because the
+      # usage dashboard must measure a cap exactly the way admission does — a
+      # second copy of this drifts into showing "60% used" for an account the
+      # guard is already refusing. `account_ids` lets a caller pass a subtree it
+      # has already loaded.
+      def window_usage(limit, user: nil, account_ids: nil)
         events = UsageEvent.where(created_at: window_for(limit.period))
                            .where.not(status: "failed")
         events =
           case limit.scope
-          when "subtree" then events.where(account_id: limit.account.subtree_ids)
-          when "per_user" then events.where(user_id: user.id)
+          when "subtree" then events.where(account_id: account_ids || limit.account.subtree_ids)
+          when "per_user" then events.where(user_id: user&.id)
           end
 
         column = limit.metric == "tokens" ? :total_tokens : :cost
