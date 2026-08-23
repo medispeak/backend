@@ -696,7 +696,7 @@ module Scribe
 
     # Physical attempts of this whole-session function already run; the count
     # keys the next attempt so a rerun cannot collide with the first row on the
-    # unique (api_token_id, dedupe_key) index (a swallowed RecordNotUnique in
+    # unique dedupe_key index (a swallowed RecordNotUnique in
     # #meter billed real spend to nobody). Segment rows are excluded because
     # TranscribeSegmentJob also writes function "asr", keyed per segment.
     # Race-safe: commit's claim makes the orchestrator single-flight per session.

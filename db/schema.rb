@@ -349,12 +349,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_23_170100) do
     t.decimal "unit_price_page", precision: 16, scale: 8
     t.datetime "updated_at", null: false
     t.bigint "user_id"
-    t.index "COALESCE(api_token_id, (0)::bigint), dedupe_key", name: "index_usage_events_on_token_and_dedupe_key", unique: true, where: "(dedupe_key IS NOT NULL)"
     t.index ["account_id", "created_at"], name: "index_usage_events_on_account_id_and_created_at"
     t.index ["account_id", "model"], name: "index_usage_events_on_account_id_and_model"
     t.index ["account_id", "status"], name: "index_usage_events_on_account_id_and_status"
     t.index ["account_id"], name: "index_usage_events_on_account_id"
     t.index ["api_token_id"], name: "index_usage_events_on_api_token_id"
+    t.index ["dedupe_key"], name: "index_usage_events_on_dedupe_key", unique: true, where: "(dedupe_key IS NOT NULL)"
     t.index ["scribe_session_id"], name: "index_usage_events_on_scribe_session_id"
     t.index ["status", "reserved_until"], name: "index_usage_events_on_status_and_reserved_until"
     t.index ["user_id", "created_at"], name: "index_usage_events_on_user_id_and_created_at"

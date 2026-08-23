@@ -57,9 +57,9 @@ class UsageEventTest < ActiveSupport::TestCase
   end
 
   # Every playground session records usage with no api_token. While the unique
-  # index was (api_token_id, dedupe_key), Postgres treated each NULL token as
-  # distinct and enforced nothing here, so a redelivered job inserted a second
-  # event and QuotaGuard deducted twice.
+  # index led with api_token_id, Postgres treated each NULL token as distinct
+  # and enforced nothing here, so a redelivered job inserted a second event and
+  # QuotaGuard deducted twice.
   test "a duplicate dedupe_key collides when there is no api_token" do
     create(:usage_event, api_token: nil, dedupe_key: "1:asr")
 
