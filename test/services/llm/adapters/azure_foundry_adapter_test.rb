@@ -61,7 +61,7 @@ class AzureFoundryAdapterTest < ActiveSupport::TestCase
     assert_requested(:post, URL) do |req|
       dfn = definition(req.body)
       req.headers["Ocp-Apim-Subscription-Key"] == "az_test_key" &&
-        dfn["enhancedMode"] == { "enabled" => true, "model" => "mai-transcribe-1.5" } &&
+        dfn["enhancedMode"] == { "enabled" => true, "model" => "mai-transcribe-1.5", "task" => "transcribe" } &&
         !dfn.key?("locales") &&
         req.body.include?('name="audio"; filename="seg')
     end

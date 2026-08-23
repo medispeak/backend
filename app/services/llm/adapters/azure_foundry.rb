@@ -89,7 +89,11 @@ module Llm
       end
 
       def definition_json(language, mode)
-        enhanced = { enabled: true, model: config.api_model_id }
+        # task is REQUIRED whenever model is set — Azure's strict gateways 400
+        # with "Enhanced mode with model requires task to be 'transcribe'"
+        # (observed from the DO egress path 2026-08-23; lenient gateways accept
+        # the omission, which is why the docs' examples get away without it).
+        enhanced = { enabled: true, model: config.api_model_id, task: "transcribe" }
         if mode.to_sym == :translate
           enhanced[:task] = "translate"
           enhanced[:targetLanguage] = "en"
