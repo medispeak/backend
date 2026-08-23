@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_17_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_23_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -232,11 +232,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_17_140000) do
   end
 
   create_table "scribe_outputs", force: :cascade do |t|
+    t.integer "attempt", default: 0, null: false
     t.jsonb "context", default: {}, null: false
     t.datetime "created_at", null: false
     t.jsonb "inline_fields"
     t.string "output_type", null: false
     t.bigint "page_id"
+    t.jsonb "previous_results", default: [], null: false
     t.jsonb "result", default: {}, null: false
     t.jsonb "result_errors", default: [], null: false
     t.bigint "scribe_session_id", null: false
@@ -271,6 +273,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_17_140000) do
   add_check_constraint "scribe_sessions", "document_pages >= 0 AND document_pages <= 20", name: "scribe_sessions_document_pages_within_cap", validate: false
 
   create_table "scribe_transcript_segments", force: :cascade do |t|
+    t.integer "attempt", default: 0, null: false
     t.string "content_type"
     t.datetime "created_at", null: false
     t.float "duration_seconds"
@@ -300,8 +303,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_17_140000) do
   create_table "transcripts", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.decimal "duration_seconds", precision: 12, scale: 3, default: "0.0"
+    t.datetime "edited_at"
+    t.bigint "edited_by_user_id"
     t.string "language"
     t.string "model"
+    t.text "original_text"
     t.string "provider"
     t.bigint "scribe_session_id", null: false
     t.jsonb "segments", default: []
@@ -309,7 +315,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_17_140000) do
     t.text "text"
     t.datetime "updated_at", null: false
     t.jsonb "words", default: []
-    t.index ["scribe_session_id"], name: "index_transcripts_on_scribe_session_id"
+    t.index ["scribe_session_id"], name: "index_transcripts_on_scribe_session_id", unique: true
   end
 
   create_table "usage_events", force: :cascade do |t|

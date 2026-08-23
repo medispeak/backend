@@ -89,12 +89,20 @@ class TranscribeSegmentJob < ApplicationJob
       result: as_llm_result(result),
       api_token: session.api_token,
       scribe_session: session,
-      dedupe_key: "#{session.id}:segment:#{segment.id}:asr"
+      dedupe_key: segment_dedupe_key(session, segment)
     )
     Metering::QuotaGuard.deduct!(event)
   rescue StandardError => e
     Rails.logger.error("TranscribeSegmentJob metering failed for segment=#{segment.id}: #{e.class}: #{e.message}")
     nil
+  end
+
+  # A re-transcribed segment (attempt bumped by Scribe::RetryPreparer) is a new
+  # physical provider call and needs its own key on the unique
+  # (api_token_id, dedupe_key) index; attempt 0 keeps the historical bare key.
+  def segment_dedupe_key(session, segment)
+    base = "#{session.id}:segment:#{segment.id}:asr"
+    segment.attempt.to_i.zero? ? base : "#{base}:#{segment.attempt.to_i}"
   end
 
   # Adapts AsrStage::Result to the Llm::Result contract Metering::UsageRecorder

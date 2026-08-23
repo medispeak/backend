@@ -91,6 +91,8 @@ Rails.application.routes.draw do
           post :audio
           post :documents
           post :commit
+          # `retry` is a Ruby keyword, so the action is retry_session.
+          post "retry", to: "scribe_sessions#retry_session"
           post :tokens
           post "audio/chunks", to: "scribe_sessions#audio_chunks"
           post "audio/segments", to: "scribe_sessions#audio_segments"

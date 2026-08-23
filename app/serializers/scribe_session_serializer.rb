@@ -58,19 +58,29 @@ class ScribeSessionSerializer
   # segments, tagged with the session's language hint. nil when neither exists.
   def serialize_transcript
     transcript = @session.transcript
-    return { text: transcript.text, language: transcript.language } if transcript
+    if transcript
+      return {
+        text: transcript.text,
+        language: transcript.language,
+        # A human replaced the text via /retry; no longer the model's output.
+        edited: transcript.edited?
+      }
+    end
 
     live = @session.live_transcript
     return nil if live.blank?
 
-    { text: live, language: @session.language }
+    { text: live, language: @session.language, edited: false }
   end
 
+  # attempt: 0 for the original commit, +1 per retry that recomputed the
+  # output. previous_results stays internal — operator data, not client payload.
   def serialize_output(output)
     {
       id: output.id,
       type: output.output_type,
       status: output.status,
+      attempt: output.attempt,
       result: output.result,
       errors: output.result_errors
     }
