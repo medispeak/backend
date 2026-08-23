@@ -7,9 +7,12 @@ module Metering
     ROUNDING = 6
 
     class << self
+      # Every amount here stays BigDecimal end to end: `cost` lands in a
+      # decimal(12,6) column and is settled against the decimal credit ledger,
+      # and binary floats cannot represent those fractions exactly.
       def cost(function:, provider:, model:, usage:, at: Time.current)
         function = function.to_sym
-        total = 0.0
+        total = BigDecimal(0)
         unit_price_input = nil
         unit_price_output = nil
         unit_price_audio_min = nil
@@ -40,7 +43,7 @@ module Metering
           if page_price
             unit_price_page = page_price.price_per_page
             currency = page_price.currency || currency
-            total += usage&.pages.to_i * page_price.price_per_page.to_f
+            total += usage&.pages.to_i * decimal(page_price.price_per_page)
           end
         end
 
@@ -71,15 +74,19 @@ module Metering
       end
 
       def audio_cost(usage, price)
-        seconds = usage&.audio_seconds.to_f
-        (seconds / 60.0) * price.price_per_minute.to_f
+        (decimal(usage&.audio_seconds) / 60) * decimal(price.price_per_minute)
       end
 
       def token_cost(usage, price)
-        input = usage&.input_tokens.to_i
-        output = usage&.output_tokens.to_i
-        (input / 1_000_000.0 * price.input_per_million.to_f) +
-          (output / 1_000_000.0 * price.output_per_million.to_f)
+        per_million = BigDecimal(1_000_000)
+        (usage&.input_tokens.to_i / per_million * decimal(price.input_per_million)) +
+          (usage&.output_tokens.to_i / per_million * decimal(price.output_per_million))
+      end
+
+      # A missing price column bills nothing rather than raising — metering
+      # degrades gracefully (see the class comment).
+      def decimal(value)
+        value.nil? ? BigDecimal(0) : value.to_d
       end
     end
   end
