@@ -307,6 +307,15 @@ sarvam_provider = AiProvider.find_or_create_by!(name: "Sarvam") do |p|
   p.api_key = ENV["SARVAM_API_KEY"] if ENV["SARVAM_API_KEY"].present?
 end
 
+# Azure Foundry: Microsoft's MAI-Transcribe STT served by a Foundry Speech
+# resource's LLM Speech API. base_url is per-resource, so it comes from ENV
+# (placeholder otherwise so the row shows in the admin UI). Key from ENV.
+azure_foundry_provider = AiProvider.find_or_create_by!(name: "Azure Foundry") do |p|
+  p.kind = "azure_foundry"
+  p.base_url = ENV["AZURE_FOUNDRY_BASE_URL"].presence || "https://your-resource.cognitiveservices.azure.com"
+  p.api_key = ENV["AZURE_FOUNDRY_API_KEY"] if ENV["AZURE_FOUNDRY_API_KEY"].present?
+end
+
 # Models (natural key: api_model_id + ai_provider)
 whisper_model = AiModel.find_or_create_by!(ai_provider: openai_provider, api_model_id: "whisper-1") do |m|
   m.display_name = "Whisper v2 (OpenAI)"
@@ -362,6 +371,15 @@ end
 # whole-file audio (Caller falls back on the >30s error).
 sarvam_saaras_model = AiModel.find_or_create_by!(ai_provider: sarvam_provider, api_model_id: "saaras:v3") do |m|
   m.display_name = "Sarvam Saaras v3 (Indic ASR + translate)"
+  m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
+end
+
+# MAI-Transcribe 1.5 — multilingual (43 languages incl. ml/hi/ta) with entity
+# biasing via options[:phrase_list] and verbatim output via
+# options[:transcribe_style]. Takes audio up to 5h/500MB, so it serves both the
+# 3s-segment path and whole-file uploads without a fallback for length.
+AiModel.find_or_create_by!(ai_provider: azure_foundry_provider, api_model_id: "mai-transcribe-1.5") do |m|
+  m.display_name = "MAI-Transcribe 1.5 (Azure Foundry)"
   m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }
 end
 
@@ -439,6 +457,13 @@ end
 
 # Sarvam Saaras per-minute price (ESTIMATE — confirm against sarvam.ai/pricing).
 AudioModelPrice.find_or_create_by!(provider: "Sarvam", model: "saaras:v3") do |amp|
+  amp.price_per_minute = 0.006
+  amp.currency = "USD"
+  amp.effective_at = Time.current
+end
+
+# MAI-Transcribe 1.5: $0.36 per hour of audio -> per-minute.
+AudioModelPrice.find_or_create_by!(provider: "Azure Foundry", model: "mai-transcribe-1.5") do |amp|
   amp.price_per_minute = 0.006
   amp.currency = "USD"
   amp.effective_at = Time.current
