@@ -43,7 +43,7 @@ module Metering
           if page_price
             unit_price_page = page_price.price_per_page
             currency = page_price.currency || currency
-            total += usage&.pages.to_i * decimal(page_price.price_per_page)
+            total += usage&.pages.to_i * page_price.price_per_page.to_d
           end
         end
 
@@ -73,20 +73,16 @@ module Metering
         function == :ocr
       end
 
+      # nil.to_d is BigDecimal(0), so a missing usage field or price column bills
+      # nothing rather than raising — metering degrades gracefully.
       def audio_cost(usage, price)
-        (decimal(usage&.audio_seconds) / 60) * decimal(price.price_per_minute)
+        (usage&.audio_seconds.to_d / 60) * price.price_per_minute.to_d
       end
 
       def token_cost(usage, price)
         per_million = BigDecimal(1_000_000)
-        (usage&.input_tokens.to_i / per_million * decimal(price.input_per_million)) +
-          (usage&.output_tokens.to_i / per_million * decimal(price.output_per_million))
-      end
-
-      # A missing price column bills nothing rather than raising — metering
-      # degrades gracefully (see the class comment).
-      def decimal(value)
-        value.nil? ? BigDecimal(0) : value.to_d
+        (usage&.input_tokens.to_i / per_million * price.input_per_million.to_d) +
+          (usage&.output_tokens.to_i / per_million * price.output_per_million.to_d)
       end
     end
   end

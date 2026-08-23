@@ -267,11 +267,14 @@ module Scribe
       nil
     end
 
+    # Anthropic structures via a forced tool call whose input_schema is the
+    # schema itself (see Llm::Adapters::Anthropic), so it needs no json_schema
+    # response format the way the OpenAI-compatible adapter does.
     def structuring_capable?(config)
       return false unless config.capability?(:can_structure)
+      return true if config.provider_kind == :anthropic
 
-      config.capability?(:supports_json_schema) ||
-        config.capability?(:structures_without_json_schema)
+      config.capability?(:supports_json_schema)
     end
 
     # Runs the single output through one vision call. Mirrors #call's per-output
