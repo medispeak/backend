@@ -124,12 +124,23 @@ module Llm
     # Maps a Faraday error (raised via `f.response :raise_error`) to an Llm error.
     # Mapped by HTTP status where available, falling back to exception class.
     def map_transport_error(err)
-      status = err.respond_to?(:response) && err.response.is_a?(Hash) ? err.response[:status] : nil
+      response = err.respond_to?(:response) && err.response.is_a?(Hash) ? err.response : {}
+      status = response[:status]
 
       return Llm::Timeout.new("request timed out") if timeout_error?(err) || status == 408
       return Llm::RateLimited.new("rate limited") if status == 429
 
-      Llm::BadResponse.new("provider request failed#{status ? " (status #{status})" : ''}")
+      Llm::BadResponse.new("provider request failed#{status ? " (status #{status})" : ''}#{error_detail(response[:body])}")
+    end
+
+    # The provider's error body names the actual rejection (invalid_audio, a
+    # bad locale, …); without it every 4xx logs as an indistinguishable
+    # "status 400". Truncated hard — error bodies are diagnostics, not content.
+    def error_detail(body)
+      text = body.is_a?(String) ? body : body.to_s
+      return "" if text.strip.empty? || text == "{}"
+
+      ": #{text.gsub(/\s+/, ' ')[0, 200]}"
     end
 
     def timeout_error?(err)
