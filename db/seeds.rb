@@ -376,8 +376,9 @@ end
 
 # MAI-Transcribe 1.5 — multilingual (43 languages incl. ml/hi/ta) with entity
 # biasing via options[:phrase_list] and verbatim output via
-# options[:transcribe_style]. Takes audio up to 5h/500MB, so it serves both the
-# 3s-segment path and whole-file uploads without a fallback for length.
+# options[:transcribe_style]. Accepts WAV/Ogg-Opus/MP3/FLAC but rejects
+# WebM (verified live), so pair it with a Whisper/Sarvam fallback wherever the
+# browser's WebM/Opus segment path feeds ASR.
 AiModel.find_or_create_by!(ai_provider: azure_foundry_provider, api_model_id: "mai-transcribe-1.5") do |m|
   m.display_name = "MAI-Transcribe 1.5 (Azure Foundry)"
   m.capabilities = { "accepts_audio" => true, "can_transcribe" => true }

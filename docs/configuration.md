@@ -272,7 +272,11 @@ mai = azure.ai_models.create!(api_model_id: "mai-transcribe-1.5",
 
 # phrase_list biases recognition toward domain vocabulary (drug names, staff
 # names); transcribe_style: "verbatim" keeps fillers and disfluencies.
+# fallback_ai_model matters: MAI accepts WAV/Ogg-Opus/MP3/FLAC but rejects the
+# browser recorder's WebM/Opus (verified live), so segment-path audio must be
+# able to fall back to a WebM-capable provider (Whisper/Sarvam).
 ModelAssignment.create!(scope_type: "System", function: "asr", ai_model: mai,
+                        fallback_ai_model: whisper,
                         options: { phrase_list: [ "Dolo 650", "Metformin" ] })
 ```
 

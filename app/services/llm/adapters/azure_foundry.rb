@@ -4,9 +4,11 @@ module Llm
     # served by an Azure AI Foundry Speech resource's LLM Speech API:
     # POST {base_url}/speechtotext/transcriptions:transcribe?api-version=…
     # Multipart with an `audio` file part and a `definition` JSON part; auth is
-    # the "Ocp-Apim-Subscription-Key" header. Accepts WebM/Opus, WAV, MP3,
-    # FLAC, AAC, … up to 5h/500MB, so the 3s segment path and whole-file audio
-    # both fit without transcoding.
+    # the "Ocp-Apim-Subscription-Key" header. Formats verified live 2026-08-23:
+    # WAV, Ogg/Opus, MP3, FLAC accepted; WebM and M4A/AAC rejected with 400
+    # invalid_audio (despite the generic LLM Speech docs listing WebM). The
+    # browser recorder emits WebM/Opus — same codec, unaccepted container — so
+    # the 3s segment path needs a fallback provider until Azure takes WebM.
     #
     # Omitting `locales` keeps the model's multilingual auto-detect; a language
     # hint is sent as a bare ISO-639 code ("ml-IN" -> "ml"). The portable
