@@ -38,6 +38,14 @@ class OpenaiCatalogTest < ActiveSupport::TestCase
     end
   end
 
+  test "provision! adds GPT-6 Luna on high reasoning effort" do
+    provider = create(:ai_provider, name: "OpenAI", base_url: "https://api.openai.com/")
+    OpenaiCatalog.provision!
+
+    model = AiModel.find_by!(ai_provider: provider, api_model_id: "gpt-6-luna")
+    assert_equal "high", model.capabilities["reasoning_effort"]
+  end
+
   test "provision! is idempotent and never overwrites an operator's rows" do
     create(:ai_provider, name: "OpenAI", base_url: "https://api.openai.com/")
     OpenaiCatalog.provision!

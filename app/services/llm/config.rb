@@ -41,6 +41,13 @@ module Llm
       !!@capabilities[name.to_sym] || !!@capabilities[name.to_s]
     end
 
+    # OpenAI reasoning effort ("low"/"medium"/"high"), from the model row only:
+    # the fallback inherits the assignment's options and may 400 on the param.
+    def reasoning_effort
+      value = @capabilities[:reasoning_effort] || @capabilities["reasoning_effort"]
+      value.to_s unless value.to_s.strip.empty?
+    end
+
     # ASR task mode, derived from the resolved assignment options:
     #   :transcribe (default) — keep the spoken language (incl. code-mix).
     #   :translate            — Whisper translates the audio to English.

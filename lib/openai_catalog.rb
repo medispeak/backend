@@ -25,6 +25,20 @@ module OpenaiCatalog
       # differs — the price is a row, not code.
       input_per_million: 0.10,
       output_per_million: 0.60
+    },
+    "gpt-6-luna" => {
+      display_name: "GPT-6 Luna (high reasoning)",
+      capabilities: {
+        "can_structure" => true, "supports_json_schema" => true,
+        "supports_function_calling" => true,
+        "supports_vision" => true, "supports_pdf" => true,
+        "max_output_tokens" => 128_000,
+        # Sent as `reasoning_effort` on every call to this model.
+        "reasoning_effort" => "high"
+      },
+      # OpenRouter's pass-through figures on 2026-10-05, as for 5.6 Luna above.
+      input_per_million: 0.10,
+      output_per_million: 0.50
     }
   }.freeze
 

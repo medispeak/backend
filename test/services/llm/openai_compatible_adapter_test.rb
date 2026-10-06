@@ -4,8 +4,12 @@ require "minitest/autorun"
 require "webmock/minitest"
 require "tempfile"
 require "openai"
+# The adapter calls blank? on documents; Rails loads this, a standalone run does not.
+require "active_support"
+require "active_support/core_ext/object/blank"
 
-unless defined?(Rails)
+# `bin/rails test <this file>` defines Rails without booting the app.
+unless defined?(Rails) && Rails.respond_to?(:application) && Rails.application&.initialized?
   base = File.expand_path("../../../app/services/llm", __dir__)
   %w[usage result error timeout rate_limited bad_response config adapter
      adapters/openai_compatible registry caller].each { |f| require_relative "#{base}/#{f}" }
@@ -73,6 +77,30 @@ class OpenaiCompatibleAdapterTest < Minitest::Test
         rf.dig("json_schema", "strict") == true &&
         rf.dig("json_schema", "schema", "required") == [ "name" ] &&
         rf.dig("json_schema", "schema", "properties", "name", "type") == [ "string", "null" ]
+    end
+  end
+
+  def test_structure_sends_the_models_reasoning_effort
+    stub_request(:post, "https://api.openai.com/v1/chat/completions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: chat_body)
+
+    cfg = config(model: "gpt-6-luna", caps: { supports_json_schema: true, reasoning_effort: "high" })
+    adapter(cfg).structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
+
+    assert_requested(:post, "https://api.openai.com/v1/chat/completions") do |req|
+      JSON.parse(req.body)["reasoning_effort"] == "high"
+    end
+  end
+
+  # Non-reasoning models (gpt-4.1-mini, the 4o family) 400 on the parameter.
+  def test_structure_omits_reasoning_effort_when_the_model_declares_none
+    stub_request(:post, "https://api.openai.com/v1/chat/completions")
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: chat_body)
+
+    adapter.structure(messages: [ { role: "user", content: "hi" } ], schema: core_schema)
+
+    assert_requested(:post, "https://api.openai.com/v1/chat/completions") do |req|
+      !JSON.parse(req.body).key?("reasoning_effort")
     end
   end
 

@@ -40,9 +40,9 @@ module Llm
         started = monotonic
         params = { model: config.api_model_id, messages: with_documents(messages, documents) }
         params[:response_format] = json_schema_format(schema) if config.capability?(:supports_json_schema)
-        params[output_budget_param] = clamp_ocr_budget(max_tokens) if max_tokens
+        params[output_budget_param] = output_budget(max_tokens) if max_tokens
 
-        response = client.chat(parameters: params)
+        response = chat(params)
         choice = response.dig("choices", 0) || {}
         finish_reason = choice["finish_reason"]
         content = choice.dig("message", "content")
@@ -89,8 +89,8 @@ module Llm
           model: config.api_model_id,
           messages: [ { role: "user", content: parts } ]
         }
-        params[output_budget_param] = clamp_ocr_budget(max_tokens) if max_tokens
-        response = client.chat(parameters: params)
+        params[output_budget_param] = output_budget(max_tokens) if max_tokens
+        response = chat(params)
         choice = response.dig("choices", 0) || {}
         finish_reason = choice["finish_reason"]
         text = choice.dig("message", "content")
@@ -121,8 +121,21 @@ module Llm
       # completions at 16,384 tokens and 400s anything above it. gpt-4.1 and the
       # reasoning models allow more; declare that in capabilities.max_output_tokens.
       DEFAULT_OUTPUT_CEILING = 16_384
+      # Reasoning tokens count against the same output budget as the answer;
+      # OpenAI's guidance is to reserve ~25k for them.
+      REASONING_HEADROOM = 25_000
 
       private
+
+      def chat(params)
+        params[:reasoning_effort] = config.reasoning_effort if config.reasoning_effort
+        client.chat(parameters: params)
+      end
+
+      def output_budget(max_tokens)
+        max_tokens = max_tokens.to_i + REASONING_HEADROOM if config.reasoning_effort
+        clamp_ocr_budget(max_tokens)
+      end
 
       # Which request field carries the OCR output budget.
       #
