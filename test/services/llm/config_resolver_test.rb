@@ -105,6 +105,21 @@ class LlmConfigResolverTest < ActiveSupport::TestCase
     assert_equal "fb", cfg.fallback.api_model_id
   end
 
+  # The fallback is a different model, often one that 400s on reasoning_effort,
+  # so the setting must come from each model's own row, not the shared options.
+  test "reasoning effort comes from the model row and does not leak to the fallback" do
+    primary = create(:ai_model, api_model_id: "gpt-6-luna",
+                                capabilities: { "can_structure" => true, "reasoning_effort" => "high" })
+    fallback = create(:ai_model, api_model_id: "gpt-4.1-mini", capabilities: { "can_structure" => true })
+    create(:model_assignment, scope_type: "System", function: "structuring",
+                              ai_model: primary, fallback_ai_model: fallback)
+
+    cfg = Llm::ConfigResolver.call(function: :structuring)
+
+    assert_equal "high", cfg.reasoning_effort
+    assert_nil cfg.fallback.reasoning_effort
+  end
+
   # Regression for the 2026-08-16 prod incident: the admin form submitted
   # options as the JSON text "{}" (a String), Rails persisted it as a JSON
   # string scalar, and every ASR call died in #symbolize with

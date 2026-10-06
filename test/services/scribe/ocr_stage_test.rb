@@ -241,6 +241,21 @@ class OcrStageTest < Minitest::Test
     end
   end
 
+  # Reasoning tokens are drawn from the same budget as the transcription, so a
+  # page-sized budget alone would truncate a one-page report on high effort.
+  def test_a_reasoning_model_gets_headroom_on_top_of_the_page_budget
+    stub_request(:post, CHAT_URL).to_return(openai_body)
+    config = openai_config(capabilities: { max_output_tokens: 128_000, reasoning_effort: "high" })
+    Scribe::OcrStage.new(config: config).call(documents, pages: 6)
+
+    assert_requested(:post, CHAT_URL) do |req|
+      body = JSON.parse(req.body)
+      body["reasoning_effort"] == "high" &&
+        body["max_completion_tokens"] ==
+          6 * Scribe::OcrStage::TOKENS_PER_PAGE + Llm::Adapters::OpenaiCompatible::REASONING_HEADROOM
+    end
+  end
+
   # OpenAI proper: `max_tokens` is deprecated there and rejected by the o-series
   # and GPT-5, while `max_completion_tokens` is accepted by every current model.
   def test_openai_ocr_sends_the_budget_as_max_completion_tokens
